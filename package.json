@@ -3,6 +3,13 @@
   "version": "0.1.1",
   "type": "module",
   "description": "AI-powered agentic Telegram bot built on Gramora + Groq",
+  "keywords": [
+    "telegram",
+    "bot",
+    "ai",
+    "gramora",
+    "typescript"
+  ],
   "license": "MIT",
   "author": "mra1k3r0",
   "repository": {
@@ -14,30 +21,42 @@
     "url": "https://github.com/mra1k3r0/mych-minar1/issues"
   },
   "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "dev": "tsc -w & node --watch dist/index.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.ts\" \"*.{json,md}\" \".github/workflows/*.yml\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"*.{json,md}\" \".github/workflows/*.yml\""
+    "format:check": "prettier --check \"src/**/*.ts\" \"*.{json,md}\" \".github/workflows/*.yml\"",
+    "verify": "npm run typecheck && npm run lint && npm run format:check",
+    "test:coverage": "c8 --reporter=lcov --reporter=text-summary node --test"
   },
   "dependencies": {
     "@mra1k3r0/gramora": "^0.0.16",
-    "dotenv": "^16.5.0",
+    "dotenv": "^17.4.2",
     "expr-eval": "^2.0.2",
     "jsonc-parser": "^3.3.1",
-    "undici": "^8.0.2",
+    "undici": "^8.1.0",
     "youtubei.js": "^17.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^22.15.2",
+    "@types/node": "^25.6.0",
+    "c8": "^11.0.0",
     "eslint": "^10.2.1",
     "globals": "^17.5.0",
-    "prettier": "^3.6.2",
-    "typescript": "^5.8.3",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.0"
   }
 }

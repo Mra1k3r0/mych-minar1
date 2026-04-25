@@ -1,0 +1,151 @@
+{
+  "play": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "music query",
+    "examples": ["play the weeknd blinding lights", "play lofi chill"],
+    "aliases": ["music"],
+    "keywords": ["play", "song", "music", "audio", "listen"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "What music vibe/artist/genre do you want?"
+  },
+  "video": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "video query",
+    "examples": ["video clairo pretty girl official", "show me chill mv"],
+    "aliases": ["mv", "clip"],
+    "keywords": ["video", "mv", "clip", "watch"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "What exact video/topic should I search?"
+  },
+  "choose": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "options separated by |",
+    "examples": ["choose pizza | burger | ramen"],
+    "aliases": ["pick", "decide"],
+    "keywords": ["choose", "pick", "decide"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "Give me options separated by | (example: pizza | burger | ramen)."
+  },
+  "roll": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "dice format XdY",
+    "examples": ["roll 1d20"],
+    "keywords": ["roll", "dice", "d20", "d6"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "What dice format? Example: 1d20 or 2d6."
+  },
+  "rps": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "rock|paper|scissors",
+    "examples": ["rps rock"],
+    "aliases": ["rockpaperscissors"],
+    "keywords": ["rps", "rock paper scissors", "rockpaperscissors"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "Pick one: rock, paper, or scissors."
+  },
+  "8ball": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "yes/no question",
+    "examples": ["8ball will i pass?"],
+    "aliases": ["eightball"],
+    "keywords": ["8ball", "eightball", "magic ball"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "Ask me a full yes/no question first."
+  },
+  "vtuber": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional name and count",
+    "examples": ["vtuber gura 2"],
+    "keywords": ["vtuber", "gura", "pekora", "korone", "mumei", "fubuki", "botan", "marine"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "Which VTuber and optional count? Example: gura 2"
+  },
+  "cat": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["cat", "send me cat"],
+    "keywords": ["cat", "kitty", "meow"],
+    "neverNeedsClarify": true
+  },
+  "dog": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["dog", "send me dog"],
+    "keywords": ["dog", "puppy", "woof"],
+    "neverNeedsClarify": true
+  },
+  "meme": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["meme"],
+    "keywords": ["meme", "funny"],
+    "neverNeedsClarify": true
+  },
+  "neko": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["neko"], "keywords": ["neko", "anime cat"], "neverNeedsClarify": true },
+  "hug": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["hug"], "keywords": ["hug"], "neverNeedsClarify": true },
+  "kiss": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["kiss"], "keywords": ["kiss"], "neverNeedsClarify": true },
+  "pat": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["pat"], "keywords": ["pat", "headpat"], "neverNeedsClarify": true },
+  "cuddle": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["cuddle"], "keywords": ["cuddle"], "neverNeedsClarify": true },
+  "slap": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["slap"], "keywords": ["slap"], "neverNeedsClarify": true },
+  "quote": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["quote"], "keywords": ["quote", "motivate"], "neverNeedsClarify": true },
+  "fact": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["fact"], "keywords": ["fact", "trivia"], "neverNeedsClarify": true },
+  "flip": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["flip"], "keywords": ["flip", "coin"], "neverNeedsClarify": true },
+  "help": {
+    "group": "core",
+    "autoExecutable": true,
+    "matchCommandName": false,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["help", "show commands", "command list"],
+    "aliases": ["commands"],
+    "keywords": [
+      "command list",
+      "list commands",
+      "available commands",
+      "show commands",
+      "what commands",
+      "your commands",
+      "features"
+    ],
+    "neverNeedsClarify": true
+  },
+  "start": { "group": "core", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["start"], "keywords": ["start", "begin"], "neverNeedsClarify": true },
+  "id": { "group": "core", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["id"], "keywords": ["id"], "neverNeedsClarify": true },
+  "ask": {
+    "group": "ai",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "question text",
+    "examples": ["ask explain recursion simply"],
+    "keywords": ["ask", "question"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "What do you want to ask?"
+  },
+  "chat": { "group": "ai", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["chat"], "keywords": ["chat mode"], "neverNeedsClarify": true },
+  "agent": { "group": "ai", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["agent"], "keywords": ["agent mode"], "neverNeedsClarify": true },
+  "clear": { "group": "ai", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["clear"], "keywords": ["clear chat", "reset chat"], "neverNeedsClarify": true },
+  "status": { "group": "admin", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["status"], "keywords": ["status"], "neverNeedsClarify": true },
+  "stats": { "group": "admin", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["stats"], "keywords": ["stats"], "neverNeedsClarify": true },
+  "uptime": { "group": "core", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["uptime"], "keywords": ["uptime"], "neverNeedsClarify": true },
+  "ping": { "group": "core", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["ping"], "keywords": ["ping"], "neverNeedsClarify": true }
+}

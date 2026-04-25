@@ -6,7 +6,11 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function parseRetryAfterMs(headers: Headers, fallbackMs: number): number {
+type HeaderGetter = {
+  get(name: string): string | null;
+};
+
+function parseRetryAfterMs(headers: HeaderGetter, fallbackMs: number): number {
   const raw = headers.get("retry-after");
   if (!raw) return fallbackMs;
   const num = Number(raw);

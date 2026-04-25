@@ -1,0 +1,61 @@
+{
+  // Config file for non-secret settings. Comments supported (JSONC).
+  // Secrets should stay in .env (API keys / Telegram token).
+
+  "llm": {
+    // provider:
+    // - "openai_compatible" (Groq, OpenAI, any OpenAI-style /chat/completions)
+    // - "anthropic" (Claude via /v1/messages)
+    "provider": "openai_compatible",
+
+    // For openai_compatible:
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "model": "openai/gpt-oss-120b",
+    // Optional fallback rotation list (tried in order on retryable failures).
+    // Keep provider/baseUrl compatible with the models below.
+    "models": [
+      "openai/gpt-oss-120b",
+      "moonshotai/kimi-k2-instruct",
+      "moonshotai/kimi-k2-instruct-0905",
+      "qwen/qwen3-32b"
+    ],
+    "apiKeyEnv": "GROQ_API_KEY",
+
+    // Limits (tune per provider/free tier)
+    "limits": {
+      "requestsPerMinute": 30,
+      "requestsPerDay": 1000,
+      "tokensPerMinute": 8000,
+      "tokensPerDay": 200000
+    }
+
+    // For anthropic:
+    // "baseUrl": "https://api.anthropic.com",
+    // "model": "claude-3-5-sonnet-20241022",
+    // "apiKeyEnv": "ANTHROPIC_API_KEY"
+  },
+
+  "bot": {
+    // Conversation memory size per user
+    "maxConversationHistory": 20,
+    // Agent tool-calling iterations
+    "maxAgentIterations": 5,
+    // LLM token/call saving mode:
+    // - "auto": enable low-token behavior only when budget gets tight
+    // - "always": always use low-token behavior (best for strict free-tier usage)
+    // - "off": disable low-token behavior
+    "lowTokenMode": "auto",
+
+    // Prompt layering (inspired by claude-code):
+    // - systemPromptOverride: replaces the entire default prompt
+    // - systemPromptAppend: appended after the chosen base prompt
+    // - systemPrompt: (legacy) if set, acts like systemPromptOverride
+    // "systemPromptOverride": "You are ...",
+    // "systemPromptAppend": "Extra rules for this deployment...",
+    // "systemPrompt": "LEGACY (same as override)"
+
+    // Telegram anti-spam middleware (messages/user/minute)
+    "telegramUserRpmLimit": 15
+  }
+}
+

@@ -800,7 +800,7 @@ export class FunController {
         ],
         { maxTokens: 80 },
       );
-      const caption = message.content.trim().replace(/^["'`]+|["'`]+$/g, "");
+      const caption = (message.content ?? "").trim().replace(/^["'`]+|["'`]+$/g, "");
       if (caption.length >= 3) return caption.slice(0, 55);
     } catch {
       // Caption fallback already exists, so we chill here.

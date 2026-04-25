@@ -334,12 +334,12 @@ class AnthropicClient implements LlmClient {
             {
               type: "tool_result",
               tool_use_id: m.tool_call_id ?? "tool_call",
-              content: m.content,
+              content: m.content ?? "",
             },
           ] satisfies AnthropicContentBlock[],
         };
       }
-      return { role: m.role, content: m.content };
+      return { role: m.role, content: m.content ?? "" };
     });
 
     const inputEstimate = this.estimateTokens(messages);

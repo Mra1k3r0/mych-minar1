@@ -96,7 +96,7 @@ export class AiController {
         },
         { role: "user", content: text },
       ]);
-      const parsed = this.parseIntentJson(message.content);
+      const parsed = this.parseIntentJson(message.content ?? "");
       if (!parsed) return { mode: "chat", confidence: 0 };
       if (!parsed.command) return { mode: "chat", confidence: parsed.confidence };
       if (!commandRegistry.get(parsed.command))
@@ -156,7 +156,7 @@ export class AiController {
     let used = 0;
     for (let i = tail.length - 1; i >= 0; i--) {
       const m = tail[i];
-      const size = m.content.length + 24;
+      const size = (m.content?.length ?? 0) + 24;
       if (used + size > maxChars && out.length > 0) break;
       out.unshift(m);
       used += size;
@@ -204,7 +204,7 @@ export class AiController {
         },
         { role: "user", content: text },
       ]);
-      const m = message.content.match(/\{[\s\S]*\}/);
+      const m = message.content?.match(/\{[\s\S]*\}/);
       const parsed = m ? (JSON.parse(m[0]) as { header?: string }) : {};
       const headerRaw = (parsed.header ?? "").trim();
       const header = headerRaw.length >= 4 ? headerRaw : this.localCommandListHeader(gram);
@@ -371,7 +371,7 @@ export class AiController {
         },
         { role: "user", content: userText },
       ]);
-      const optimized = message.content.trim().replace(/^["'`]+|["'`]+$/g, "");
+      const optimized = (message.content ?? "").trim().replace(/^["'`]+|["'`]+$/g, "");
       if (optimized.length >= 4) return optimized.slice(0, 70);
     } catch {
       // Silent fallback: local query fallback handles this path.
@@ -432,7 +432,7 @@ export class AiController {
         },
         { role: "user", content: `userText=${userText}\nargs=${args}` },
       ]);
-      const m = message.content.match(/\{[\s\S]*\}/);
+      const m = message.content?.match(/\{[\s\S]*\}/);
       if (!m) return false;
       const parsed = JSON.parse(m[0]) as { ask?: boolean };
       return Boolean(parsed.ask);
@@ -480,7 +480,7 @@ export class AiController {
         },
         { role: "user", content: `command=${command}\nuserText=${userText}\nargs=${args}` },
       ]);
-      const m = message.content.match(/\{[\s\S]*\}/);
+      const m = message.content?.match(/\{[\s\S]*\}/);
       if (!m) return { ask: false, prompt: this.defaultClarifyPrompt(command) };
       const parsed = JSON.parse(m[0]) as { ask?: boolean; prompt?: string };
       return {
@@ -538,7 +538,7 @@ export class AiController {
           content: `pending_command=${pendingCommand}\npending_args=${pendingArgs}\nfollowup=${followupText}`,
         },
       ]);
-      const parsed = this.parseIntentJson(message.content);
+      const parsed = this.parseIntentJson(message.content ?? "");
       if (!parsed)
         return {
           mode: "continue",
@@ -958,7 +958,7 @@ export class AiController {
         },
         { role: "user", content: `command=${command}\nrequest=${userText}` },
       ]);
-      const m = message.content.match(/\{[\s\S]*\}/);
+      const m = message.content?.match(/\{[\s\S]*\}/);
       if (!m) return;
       const parsed = JSON.parse(m[0]) as { send?: boolean; text?: string };
       if (!parsed.send) return;
@@ -1041,7 +1041,7 @@ export class AiController {
             },
             { role: "user", content: text },
           ]);
-          return this.parseIntentJson(message.content);
+          return this.parseIntentJson(message.content ?? "");
         }),
       );
 
@@ -1309,7 +1309,7 @@ export class AiController {
 
     try {
       const { message } = await llm.chat(messages, maxTokens ? { maxTokens } : undefined);
-      await this.sendOrClarify(gram, message.content, question);
+      await this.sendOrClarify(gram, message.content ?? "", question);
     } catch (err) {
       await this.handleAiError(gram, err);
     }
@@ -1449,7 +1449,7 @@ export class AiController {
     const maxTokens = this.responseMaxTokens(text);
     try {
       const { message } = await llm.chat(messages, maxTokens ? { maxTokens } : undefined);
-      const extracted = this.extractCommandFromAssistantText(message.content);
+      const extracted = this.extractCommandFromAssistantText(message.content ?? "");
       const shouldAutoRunExtracted =
         this.isActionRequest(text) ||
         /^\/[a-z0-9_]+/i.test(text.trim()) ||
@@ -1460,15 +1460,15 @@ export class AiController {
       }
       if (this.isActionRequest(text)) {
         const suggested =
-          this.parseCommandIntent(message.content) ??
+          this.parseCommandIntent(message.content ?? "") ??
           this.parseCommandIntent(this.localPromptize(text));
         if (suggested?.command) {
           const ran = await this.executeKnownCommand(gram, suggested.command, suggested.args);
           if (ran) return;
         }
       }
-      conversations.append(userId, { role: "assistant", content: message.content });
-      await this.sendOrClarify(gram, message.content, text);
+      conversations.append(userId, { role: "assistant", content: message.content ?? "" });
+      await this.sendOrClarify(gram, message.content ?? "", text);
     } catch (err) {
       await this.handleAiError(gram, err);
     }

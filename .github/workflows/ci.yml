@@ -60,7 +60,21 @@ jobs:
       - name: Test with coverage
         run: npm run test:coverage
 
+      - name: Check coverage payload
+        id: coverage_gate
+        shell: bash
+        run: |
+          if [ -f coverage/lcov.info ] && grep -q '^DA:' coverage/lcov.info; then
+            echo "has_data=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_data=false" >> "$GITHUB_OUTPUT"
+            echo "No line-level coverage data found; skipping Codecov upload."
+          fi
+
       - name: Upload coverage to Codecov
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        if: ${{ env.CODECOV_TOKEN != '' && steps.coverage_gate.outputs.has_data == 'true' }}
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

@@ -1,6 +1,7 @@
 import { config } from "../config.js";
 import type { LlmClient, ChatMessage, ToolDefinition, ToolCall } from "./llm.js";
 import { normalizeToolOutput } from "./tool-output.js";
+import { guardMathExpression } from "../utils/security.js";
 import { Parser } from "expr-eval";
 
 const AGENT_TOOLS: ToolDefinition[] = [
@@ -218,10 +219,8 @@ export class AgentExecutor {
 
   private toolCalculate(expression: string): string {
     const expr = expression.trim();
-    if (expr.length > 200) return "Error: Expression too long (max 200 chars).";
-    if (/\b(constructor|__proto__|prototype|process|require)\b/i.test(expr)) {
-      return "Error: Security block: suspicious keywords detected.";
-    }
+    const guard = guardMathExpression(expr);
+    if (!guard.ok) return `Error: ${guard.error ?? "Invalid expression."}`;
     try {
       const result = this.mathParser.evaluate(expr);
       if (typeof result !== "number" || !Number.isFinite(result)) {

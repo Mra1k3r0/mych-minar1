@@ -11,27 +11,36 @@ const startedAt = Date.now();
 export class CoreController {
   @Command("start")
   async start(gram: BaseContext) {
+    const userId = gram.fromId;
+    const isAdmin = userId ? config.bot.adminIds.includes(userId) : false;
     const name = gram.message?.from?.first_name ?? "there";
-    await gram.send(
-      [
-        `Yo ${name} — I'm *minar1* running on *${config.llm.model}*.`,
-        "Built by *mra1k3r0* (John Paul Caigas).",
-        "",
-        "Quick actions:",
-        "• /chat — normal conversation",
-        "• /agent — tool-using agent mode",
-        "• /ask <q> — one-shot (no memory)",
-        "• /status — budgets / readiness",
-        "• /help — all commands",
-      ].join("\n"),
-      Keyboard.inline()
-        .text("💬 Chat mode", "mode:chat")
-        .text("🤖 Agent mode", "mode:agent")
-        .row()
-        .text("📊 Status", "cmd:status")
-        .text("❓ Help", "cmd:help")
-        .build(),
-    );
+
+    const kb = Keyboard.inline()
+      .text("💬 Chat mode", "mode:chat")
+      .text("🤖 Agent mode", "mode:agent")
+      .row();
+
+    if (isAdmin) {
+      kb.text("📊 Status", "cmd:status");
+    }
+    kb.text("❓ Help", "cmd:help");
+
+    const lines = [
+      `Yo ${name} — I'm *minar1* running on *${config.llm.model}*.`,
+      "Built by *mra1k3r0* (John Paul Caigas).",
+      "",
+      "Quick actions:",
+      "• /chat — normal conversation",
+      "• /agent — tool-using agent mode",
+      "• /ask <q> — one-shot (no memory)",
+    ];
+
+    if (isAdmin) {
+      lines.push("• /status — budgets / readiness");
+    }
+    lines.push("• /help — all commands");
+
+    await gram.send(lines.join("\n"), kb.build());
   }
 
   @Command("help")

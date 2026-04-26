@@ -726,7 +726,11 @@ export class AiController {
     const calcMatch =
       lower.match(/^\s*(?:calc|calculate|math)\s+(.+)\s*$/) ?? lower.match(/^\s*=\s*(.+)\s*$/);
     if (calcMatch?.[1]) {
-      const expr = calcMatch[1];
+      const expr = calcMatch[1].trim();
+      if (expr.length > 200) return "Expression too long.";
+      if (/\b(constructor|__proto__|prototype|process|require)\b/i.test(expr)) {
+        return "Security block: suspicious keywords detected.";
+      }
       try {
         const result = this.mathParser.evaluate(expr);
         if (typeof result === "number" && Number.isFinite(result))

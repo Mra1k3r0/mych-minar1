@@ -44,6 +44,12 @@ export class AdminController {
 
   @Command("status")
   async status(gram: BaseContext) {
+    const userId = gram.fromId;
+    if (!userId || !config.bot.adminIds.includes(userId)) {
+      await gram.send("🔒 Admin only.");
+      return;
+    }
+
     const stats = llm.stats;
     const rl = llm.rateLimitStatus();
 

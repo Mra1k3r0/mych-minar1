@@ -217,14 +217,19 @@ export class AgentExecutor {
   }
 
   private toolCalculate(expression: string): string {
+    const expr = expression.trim();
+    if (expr.length > 200) return "Error: Expression too long (max 200 chars).";
+    if (/\b(constructor|__proto__|prototype|process|require)\b/i.test(expr)) {
+      return "Error: Security block: suspicious keywords detected.";
+    }
     try {
-      const result = this.mathParser.evaluate(expression);
+      const result = this.mathParser.evaluate(expr);
       if (typeof result !== "number" || !Number.isFinite(result)) {
-        return `Error: Expression "${expression}" did not produce a valid number`;
+        return `Error: Expression "${expr}" did not produce a valid number`;
       }
       return `Result: ${String(result)}`;
     } catch (err) {
-      return `Error evaluating "${expression}": ${(err as Error).message}`;
+      return `Error evaluating "${expr}": ${(err as Error).message}`;
     }
   }
 

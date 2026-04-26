@@ -57,18 +57,25 @@ export class GroqRateLimiter {
   }
 
   /**
-   * Performance optimization: use a while loop with shift() to prune expired entries
-   * from the front of the sorted entries array and update running totals in O(K).
+   * Performance optimization: find the cutoff index and use a single splice()
+   * to remove expired entries in O(N). Substracts from running totals in O(K).
    */
   private prune(budget: LimiterBudget, now: number) {
     const cutoff = now - budget.windowMs;
+    let expiredCount = 0;
+    let expiredTokens = 0;
+
     // Entries are naturally sorted by timestamp.
-    while (budget.entries.length > 0 && budget.entries[0].timestamp <= cutoff) {
-      const removed = budget.entries.shift();
-      if (removed) {
-        budget.currentRequests--;
-        budget.currentTokens -= removed.tokens;
-      }
+    for (const entry of budget.entries) {
+      if (entry.timestamp > cutoff) break;
+      expiredCount++;
+      expiredTokens += entry.tokens;
+    }
+
+    if (expiredCount > 0) {
+      budget.entries.splice(0, expiredCount);
+      budget.currentRequests -= expiredCount;
+      budget.currentTokens -= expiredTokens;
     }
   }
 

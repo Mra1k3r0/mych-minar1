@@ -64,3 +64,32 @@ void test("GroqRateLimiter should correctly update running totals when pruning",
   assert.equal(status.dailyRequests.used, 1, "Daily requests should NOT be pruned");
   assert.equal(status.dailyTokens.used, 100, "Daily tokens should NOT be pruned");
 });
+
+void test("GroqRateLimiter should correctly handle bulk pruning", () => {
+  const limiter = new GroqRateLimiter({
+    requestsPerMinute: 100,
+    requestsPerDay: 1000,
+    tokensPerMinute: 10000,
+    tokensPerDay: 100000,
+  });
+
+  /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call */
+  const l = limiter as any;
+  const now = Date.now();
+
+  // Record 50 entries
+  for (let i = 0; i < 50; i++) {
+    l.record(10);
+  }
+
+  // Expire the first 25 entries
+  for (let i = 0; i < 25; i++) {
+    l.minute.entries[i].timestamp = now - 61_000;
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call */
+
+  const status = limiter.status();
+  assert.equal(status.minuteRequests.used, 25, "Exactly 25 requests should remain in minute window");
+  assert.equal(status.minuteTokens.used, 250, "Exactly 250 tokens should remain in minute window");
+  assert.equal(status.dailyRequests.used, 50, "All 50 requests should remain in daily window");
+});

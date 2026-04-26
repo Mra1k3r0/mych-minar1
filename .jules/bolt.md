@@ -5,3 +5,7 @@
 ## 2025-04-25 - [Avoid String Allocations for Counting]
 **Learning:** Joining arrays of strings (`map().join("")`) just to count the total length or estimate tokens creates unnecessary large temporary strings, increasing memory pressure and GC cycles.
 **Action:** Use `reduce()` to sum lengths directly without allocations.
+
+## 2025-04-25 - [Bulk Pruning for Sliding Windows]
+**Learning:** Using `shift()` inside a loop for bulk removal in a JavaScript array is expensive due to re-indexing on every call ((K \cdot N)$). Finding the cutoff index and using a single `splice()` is much more efficient ((N)$ total).
+**Action:** Always prefer `splice()` for bulk removal from arrays.

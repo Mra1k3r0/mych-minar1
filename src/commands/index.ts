@@ -31,6 +31,7 @@ import "./fun/pat.js";
 import "./fun/cuddle.js";
 import "./fun/slap.js";
 import "./fun/vtuber.js";
+import "./fun/randomcolor.js";
 import "./fun/play.js";
 import "./fun/video.js";
 

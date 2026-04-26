@@ -109,6 +109,15 @@
   "slap": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["slap"], "keywords": ["slap"], "neverNeedsClarify": true },
   "quote": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["quote"], "keywords": ["quote", "motivate"], "neverNeedsClarify": true },
   "fact": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["fact"], "keywords": ["fact", "trivia"], "neverNeedsClarify": true },
+  "randomcolor": {
+    "group": "fun",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["randomcolor", "random color"],
+    "keywords": ["random color", "color", "hex"],
+    "neverNeedsClarify": true
+  },
   "flip": { "group": "fun", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["flip"], "keywords": ["flip", "coin"], "neverNeedsClarify": true },
   "help": {
     "group": "core",

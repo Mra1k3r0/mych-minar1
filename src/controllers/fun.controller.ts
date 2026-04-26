@@ -5,7 +5,7 @@ import { Innertube } from "youtubei.js";
 import { fetch as undiciFetch } from "undici";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -28,6 +28,14 @@ const FALLBACK_FACTS = [
   "Sharks existed before trees.",
   "Honey never really spoils.",
   "A day on Venus is longer than a year on Venus.",
+];
+
+const FALLBACK_COLORS = [
+  { hex: "FF6B6B", name: "Coral Burst" },
+  { hex: "4ECDC4", name: "Mint Wave" },
+  { hex: "556270", name: "Slate Breeze" },
+  { hex: "C7F464", name: "Lime Glow" },
+  { hex: "C44D58", name: "Crimson Pop" },
 ];
 
 const NEKO_API_BASE = "https://nekos.best/api/v2";
@@ -86,7 +94,13 @@ type VtuberApiResponse = {
   author?: string;
 };
 
-const pick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+type PopcatRandomColor = {
+  hex?: string;
+  name?: string;
+  image?: string;
+};
+
+const pick = <T>(arr: readonly T[]): T => arr[randomInt(arr.length)];
 let ytClientPromise: Promise<Innertube> | null = null;
 let ytEvaluatorPatched = false;
 type YtDownloadOptions = NonNullable<Parameters<Innertube["download"]>[1]>;
@@ -729,18 +743,26 @@ function vtuberCharacterKeyboard() {
 
 function rpsKeyboard() {
   return Keyboard.inline()
-    .text("Rock", "rps:rock")
-    .text("Paper", "rps:paper")
-    .text("Scissors", "rps:scissors")
+    .text("🪨", "rps:rock")
+    .text("📄", "rps:paper")
+    .text("✂️", "rps:scissors")
     .build();
 }
 
 @Controller()
 export class FunController {
+  private static readonly RPS_MOVES = ["rock", "paper", "scissors"] as const;
+
+  private static readonly RPS_EMOJI: Record<(typeof FunController.RPS_MOVES)[number], string> = {
+    rock: "🪨",
+    paper: "📄",
+    scissors: "✂️",
+  };
+
   private mentionTag(gram: BaseContext): string {
     const user = gram.message?.from;
     if (user?.username) return `@${user.username}`;
-    return user?.first_name ?? "bro";
+    return user?.first_name ?? "there";
   }
 
   private withMention(gram: BaseContext, text: string): string {
@@ -749,20 +771,45 @@ export class FunController {
 
   private async resolveRpsRound(
     gram: BaseContext,
-    user: "rock" | "paper" | "scissors",
-  ): Promise<void> {
-    const bot = pick(["rock", "paper", "scissors"]);
+    user: (typeof FunController.RPS_MOVES)[number],
+    updateMessageId?: number,
+  ) {
+    const bot = pick(FunController.RPS_MOVES);
     const win =
       (user === "rock" && bot === "scissors") ||
       (user === "paper" && bot === "rock") ||
       (user === "scissors" && bot === "paper");
     const draw = user === bot;
-    await gram.reply(
-      this.withMention(
-        gram,
-        `You: ${user}\nMe: ${bot}\n${draw ? "Draw" : win ? "You win" : "I win"}`,
-      ),
-    );
+
+    const outcome = draw ? "draw 🤝" : win ? "you win 🎉" : "you lose 💀";
+    const text = [
+      "🎮 rock paper scissors",
+      "",
+      `you: ${FunController.RPS_EMOJI[user]} ${user}`,
+      `bot: ${FunController.RPS_EMOJI[bot]} ${bot}`,
+      `result: ${outcome}`,
+      "",
+      "wanna run it back?",
+    ].join("\n");
+
+    if (updateMessageId !== undefined) {
+      try {
+        await gram.editText({ messageId: updateMessageId, text, replyMarkup: rpsKeyboard() });
+        return;
+      } catch {
+        // If edit fails, fallback to a fresh message.
+      }
+    }
+
+    const callbackQuery = asRecord((gram as unknown as Record<string, unknown>).callbackQuery);
+    const callbackMessage = asRecord(callbackQuery?.message);
+    const callbackReplyTo = getNumber(asRecord(callbackMessage?.reply_to_message)?.message_id);
+    const replyTo = callbackReplyTo ?? gram.message?.message_id;
+    await gram.send({
+      text,
+      replyMarkup: rpsKeyboard(),
+      ...(replyTo !== undefined ? { replyTo } : {}),
+    });
   }
 
   private async adaptiveCaption(
@@ -845,16 +892,15 @@ export class FunController {
 
   @Command("quote")
   async quote(gram: BaseContext) {
-    const data = await getJson<{ content?: string; author?: string }>(
-      "https://api.quotable.io/random",
+    const data = await getJson<Array<{ q?: string; a?: string }>>(
+      "https://zenquotes.io/api/quotes/random?",
     );
-    if (data?.content) {
-      await gram.reply(
-        this.withMention(gram, `\n"${data.content}"\n— ${data.author ?? "Unknown"}`),
-      );
+    const quote = data?.[0];
+    if (quote?.q) {
+      await gram.reply(`"${quote.q}"\n— ${quote.a ?? "Unknown"}`);
       return;
     }
-    await gram.reply(this.withMention(gram, `\n"${pick(FALLBACK_QUOTES)}"`));
+    await gram.reply(`"${pick(FALLBACK_QUOTES)}"\n— Unknown`);
   }
 
   @Command("fact")
@@ -863,10 +909,34 @@ export class FunController {
       "https://uselessfacts.jsph.pl/api/v2/facts/random?language=en",
     );
     if (data?.text) {
-      await gram.reply(this.withMention(gram, `🧠 ${data.text}`));
+      await gram.reply(data.text);
       return;
     }
-    await gram.reply(this.withMention(gram, `🧠 ${pick(FALLBACK_FACTS)}`));
+    await gram.reply(pick(FALLBACK_FACTS));
+  }
+
+  @Command("randomcolor")
+  async randomColor(gram: BaseContext) {
+    const replyTo = gram.message?.message_id;
+    const data = await getJson<PopcatRandomColor>("https://api.popcat.xyz/randomcolor");
+    const hex = (data?.hex ?? "").trim().replace(/^#/, "").toUpperCase();
+    const name = (data?.name ?? "").trim();
+    const image = (data?.image ?? "").trim();
+
+    if (hex && name && image) {
+      await gram.photo({
+        photo: image,
+        caption: `${name}\n#${hex}`,
+        ...(replyTo !== undefined ? { replyTo } : {}),
+      });
+      return;
+    }
+
+    const fallback = pick(FALLBACK_COLORS);
+    await gram.send({
+      text: `${fallback.name}\n#${fallback.hex}`,
+      ...(replyTo !== undefined ? { replyTo } : {}),
+    });
   }
 
   @Command("meme")
@@ -874,8 +944,7 @@ export class FunController {
     const customCaption = parseCaptionArg(getCommandArgs(gram));
     const data = await getJson<{ url?: string; title?: string }>("https://meme-api.com/gimme");
     if (data?.url) {
-      const fallback = this.withMention(gram, data.title ?? "Random meme");
-      const caption = customCaption ?? (await this.adaptiveCaption(gram, "meme", fallback));
+      const caption = customCaption ?? data.title ?? "Random meme";
       await gram.photo({
         photo: data.url,
         caption,
@@ -1247,7 +1316,7 @@ export class FunController {
     }
 
     if (characterArg === "random") {
-      const random = VTUBERS[Math.floor(Math.random() * VTUBERS.length)];
+      const random = pick(VTUBERS);
       await this.sendVtuberBatch(gram, random, count, finalCaption);
       return;
     }
@@ -1275,7 +1344,7 @@ export class FunController {
 
     if (characterRaw === "random") {
       await gram.answer(`random x${String(count)}`);
-      const random = VTUBERS[Math.floor(Math.random() * VTUBERS.length)];
+      const random = pick(VTUBERS);
       await this.sendVtuberBatch(gram, random, count);
       return;
     }
@@ -1291,17 +1360,18 @@ export class FunController {
 
   @Command("flip")
   async flip(gram: BaseContext) {
-    await gram.reply(this.withMention(gram, `🪙 ${Math.random() < 0.5 ? "Heads" : "Tails"}`));
+    const result = randomInt(2) === 0 ? "heads" : "tails";
+    await gram.reply(result);
   }
 
   @Command("8ball")
   async eightBall(gram: BaseContext) {
     const q = (gram.text ?? "").split(/\s+/).slice(1).join(" ").trim();
     if (!q) {
-      await gram.reply(this.withMention(gram, "ask me something: /8ball will I ship today?"));
+      await gram.reply("usage: /8ball <question>");
       return;
     }
-    await gram.reply(this.withMention(gram, `🎱 ${pick(EIGHT_BALL)}`));
+    await gram.reply(pick(EIGHT_BALL));
   }
 
   @Command("choose")
@@ -1311,11 +1381,18 @@ export class FunController {
       .split("|")
       .map((s) => s.trim())
       .filter(Boolean);
-    if (options.length < 2) {
-      await gram.reply(this.withMention(gram, "usage: /choose pizza | burger | ramen"));
+    const fallbackOptions =
+      options.length >= 2
+        ? options
+        : raw
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+    if (fallbackOptions.length < 2) {
+      await gram.reply("usage: /choose pizza | burger | ramen");
       return;
     }
-    await gram.reply(this.withMention(gram, `I pick: ${pick(options)}`));
+    await gram.reply(pick(fallbackOptions));
   }
 
   @Command("roll")
@@ -1323,49 +1400,60 @@ export class FunController {
     const arg = (gram.text ?? "").split(/\s+/).slice(1).join("").trim() || "1d6";
     const m = arg.match(/^(\d{1,2})d(\d{1,4})$/i);
     if (!m) {
-      await gram.reply(this.withMention(gram, "usage: /roll 1d20"));
+      await gram.reply("usage: /roll 1d20");
       return;
     }
     const count = Number(m[1]);
     const sides = Number(m[2]);
     if (count < 1 || count > 20 || sides < 2 || sides > 1000) {
-      await gram.reply(this.withMention(gram, "use sane dice limits: count 1-20, sides 2-1000."));
+      await gram.reply("use sane dice limits: count 1-20, sides 2-1000.");
       return;
     }
-    const rolls = Array.from({ length: count }, () => 1 + Math.floor(Math.random() * sides));
+    const rolls = Array.from({ length: count }, () => randomInt(1, sides + 1));
     const total = rolls.reduce((a, b) => a + b, 0);
     await gram.reply(
-      this.withMention(gram, `🎲 ${arg} => [${rolls.join(", ")}] (total: ${String(total)})`),
+      count === 1 ? String(rolls[0]) : `${rolls.join(", ")} (total: ${String(total)})`,
     );
   }
 
   @Command("rps")
   async rps(gram: BaseContext) {
-    const user = (gram.text ?? "").split(/\s+/)[1]?.toLowerCase() as
-      | "rock"
-      | "paper"
-      | "scissors"
-      | undefined;
-    if (!user) {
-      await gram.reply(this.withMention(gram, "Pick your move."), rpsKeyboard());
+    const userRaw = (gram.text ?? "").split(/\s+/)[1]?.toLowerCase();
+    const replyTo = gram.message?.message_id;
+    if (!userRaw) {
+      await gram.send({
+        text: "🎮 rock paper scissors\npick your move:",
+        replyMarkup: rpsKeyboard(),
+        ...(replyTo !== undefined ? { replyTo } : {}),
+      });
       return;
     }
-    if (!["rock", "paper", "scissors"].includes(user)) {
-      await gram.reply(this.withMention(gram, "usage: /rps rock|paper|scissors"), rpsKeyboard());
+    if (!FunController.RPS_MOVES.includes(userRaw as (typeof FunController.RPS_MOVES)[number])) {
+      await gram.send({
+        text: "usage: /rps rock|paper|scissors",
+        replyMarkup: rpsKeyboard(),
+        ...(replyTo !== undefined ? { replyTo } : {}),
+      });
       return;
     }
-    await this.resolveRpsRound(gram, user);
+    await this.resolveRpsRound(gram, userRaw as (typeof FunController.RPS_MOVES)[number]);
   }
 
   @CallbackQuery("rps:*")
   async rpsPick(gram: BaseContext) {
     const encoded = gram.match?.[0];
-    if (!encoded || !["rock", "paper", "scissors"].includes(encoded)) {
+    if (
+      !encoded ||
+      !FunController.RPS_MOVES.includes(encoded as (typeof FunController.RPS_MOVES)[number])
+    ) {
       await gram.answer("invalid move");
       return;
     }
-    const user = encoded as "rock" | "paper" | "scissors";
-    await gram.answer(`picked ${user}`);
-    await this.resolveRpsRound(gram, user);
+    const user = encoded as (typeof FunController.RPS_MOVES)[number];
+    const callbackQuery = asRecord((gram as unknown as Record<string, unknown>).callbackQuery);
+    const callbackMessage = asRecord(callbackQuery?.message);
+    const messageId = getNumber(callbackMessage?.message_id);
+    await gram.answer("ok");
+    await this.resolveRpsRound(gram, user, messageId);
   }
 }

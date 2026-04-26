@@ -1,6 +1,7 @@
 import { config } from "../config.js";
 import type { LlmClient, ChatMessage, ToolDefinition, ToolCall } from "./llm.js";
 import { normalizeToolOutput } from "./tool-output.js";
+import { guardMathExpression } from "../utils/security.js";
 import { Parser } from "expr-eval";
 
 const AGENT_TOOLS: ToolDefinition[] = [
@@ -217,14 +218,17 @@ export class AgentExecutor {
   }
 
   private toolCalculate(expression: string): string {
+    const expr = expression.trim();
+    const guard = guardMathExpression(expr);
+    if (!guard.ok) return `Error: ${guard.error ?? "Invalid expression."}`;
     try {
-      const result = this.mathParser.evaluate(expression);
+      const result = this.mathParser.evaluate(expr);
       if (typeof result !== "number" || !Number.isFinite(result)) {
-        return `Error: Expression "${expression}" did not produce a valid number`;
+        return `Error: Expression "${expr}" did not produce a valid number`;
       }
       return `Result: ${String(result)}`;
     } catch (err) {
-      return `Error evaluating "${expression}": ${(err as Error).message}`;
+      return `Error evaluating "${expr}": ${(err as Error).message}`;
     }
   }
 

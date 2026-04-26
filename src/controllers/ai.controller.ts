@@ -7,6 +7,7 @@ import { commandRegistry } from "../commands/index.js";
 import type { ChatMessage } from "../services/llm.js";
 import { RateLimitError } from "../services/llm.js";
 import { codeBlock, truncate } from "../utils/format.js";
+import { guardMathExpression } from "../utils/security.js";
 import { buildTelegramContext } from "../services/telegram-context.js";
 import { renderTelegramRichText } from "@mra1k3r0/gramora";
 import { Parser } from "expr-eval";
@@ -726,7 +727,9 @@ export class AiController {
     const calcMatch =
       lower.match(/^\s*(?:calc|calculate|math)\s+(.+)\s*$/) ?? lower.match(/^\s*=\s*(.+)\s*$/);
     if (calcMatch?.[1]) {
-      const expr = calcMatch[1];
+      const expr = calcMatch[1].trim();
+      const guard = guardMathExpression(expr);
+      if (!guard.ok) return guard.error ?? "Invalid expression.";
       try {
         const result = this.mathParser.evaluate(expr);
         if (typeof result === "number" && Number.isFinite(result))

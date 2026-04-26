@@ -25,7 +25,7 @@ function parseRetryAfterMs(headers: HeaderGetter, fallbackMs: number): number {
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | null;
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
@@ -162,9 +162,13 @@ class OpenAiCompatibleClient implements LlmClient {
     return this.limiter.status();
   }
 
+  /**
+   * Performance optimization: sum lengths directly to avoid large string allocation
+   * via .map().join(""). Character-to-token ratio is ~3.5.
+   */
   estimateTokens(messages: ChatMessage[]): number {
-    const text = messages.map((m) => m.content).join("");
-    return Math.ceil(text.length / 3.5) + messages.length * 4;
+    const totalLength = messages.reduce((acc, m) => acc + (m.content?.length ?? 0), 0);
+    return Math.ceil(totalLength / 3.5) + messages.length * 4;
   }
 
   async chat(
@@ -296,9 +300,13 @@ class AnthropicClient implements LlmClient {
     return this.limiter.status();
   }
 
+  /**
+   * Performance optimization: sum lengths directly to avoid large string allocation
+   * via .map().join(""). Character-to-token ratio is ~3.5.
+   */
   estimateTokens(messages: ChatMessage[]): number {
-    const text = messages.map((m) => m.content).join("");
-    return Math.ceil(text.length / 3.5) + messages.length * 4;
+    const totalLength = messages.reduce((acc, m) => acc + (m.content?.length ?? 0), 0);
+    return Math.ceil(totalLength / 3.5) + messages.length * 4;
   }
 
   async chat(
@@ -326,12 +334,12 @@ class AnthropicClient implements LlmClient {
             {
               type: "tool_result",
               tool_use_id: m.tool_call_id ?? "tool_call",
-              content: m.content,
+              content: m.content ?? "",
             },
           ] satisfies AnthropicContentBlock[],
         };
       }
-      return { role: m.role, content: m.content };
+      return { role: m.role, content: m.content ?? "" };
     });
 
     const inputEstimate = this.estimateTokens(messages);

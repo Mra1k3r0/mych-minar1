@@ -142,7 +142,7 @@ export class AgentExecutor {
 
       if (!message.tool_calls || message.tool_calls.length === 0) {
         return {
-          response: message.content,
+          response: message.content ?? "",
           toolsUsed,
           toolCommands,
           iterations,
@@ -174,7 +174,7 @@ export class AgentExecutor {
     totalTokens += final.usage.total_tokens;
 
     return {
-      response: final.message.content,
+      response: final.message.content ?? "",
       toolsUsed,
       toolCommands,
       iterations,

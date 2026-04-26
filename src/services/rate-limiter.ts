@@ -14,6 +14,8 @@ interface LimiterBudget {
   maxRequests: number;
   maxTokens: number;
   entries: WindowEntry[];
+  currentRequests: number;
+  currentTokens: number;
 }
 
 export interface RateLimitStatus {
@@ -41,25 +43,47 @@ export class GroqRateLimiter {
       maxRequests: opts.requestsPerMinute,
       maxTokens: opts.tokensPerMinute,
       entries: [],
+      currentRequests: 0,
+      currentTokens: 0,
     };
     this.daily = {
       windowMs: 86_400_000,
       maxRequests: opts.requestsPerDay,
       maxTokens: opts.tokensPerDay,
       entries: [],
+      currentRequests: 0,
+      currentTokens: 0,
     };
   }
 
+  /**
+   * Performance optimization: find the cutoff index and use a single splice()
+   * to remove expired entries in O(N). Substracts from running totals in O(K).
+   */
   private prune(budget: LimiterBudget, now: number) {
     const cutoff = now - budget.windowMs;
-    budget.entries = budget.entries.filter((e) => e.timestamp > cutoff);
+    let expiredCount = 0;
+    let expiredTokens = 0;
+
+    // Entries are naturally sorted by timestamp.
+    for (const entry of budget.entries) {
+      if (entry.timestamp > cutoff) break;
+      expiredCount++;
+      expiredTokens += entry.tokens;
+    }
+
+    if (expiredCount > 0) {
+      budget.entries.splice(0, expiredCount);
+      budget.currentRequests -= expiredCount;
+      budget.currentTokens -= expiredTokens;
+    }
   }
 
+  /**
+   * Performance optimization: return pre-calculated running totals in O(1).
+   */
   private sum(budget: LimiterBudget): { requests: number; tokens: number } {
-    return budget.entries.reduce(
-      (acc, e) => ({ requests: acc.requests + 1, tokens: acc.tokens + e.tokens }),
-      { requests: 0, tokens: 0 },
-    );
+    return { requests: budget.currentRequests, tokens: budget.currentTokens };
   }
 
   private retryAfter(budget: LimiterBudget, now: number): number {
@@ -114,7 +138,12 @@ export class GroqRateLimiter {
   record(tokens: number) {
     const entry: WindowEntry = { timestamp: Date.now(), tokens };
     this.minute.entries.push(entry);
+    this.minute.currentRequests++;
+    this.minute.currentTokens += tokens;
+
     this.daily.entries.push(entry);
+    this.daily.currentRequests++;
+    this.daily.currentTokens += tokens;
   }
 
   /** Conservative max_tokens to request, keeping headroom for response */

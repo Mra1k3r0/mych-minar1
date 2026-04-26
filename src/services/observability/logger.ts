@@ -1,7 +1,7 @@
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 type LogFields = Record<string, unknown>;
-const logStyle = (process.env.BOT_LOG_STYLE ?? "json").trim().toLowerCase();
+const logStyle = (process.env.BOT_LOG_STYLE ?? "pretty").trim().toLowerCase();
 const prettyLogs = logStyle === "pretty";
 const color = {
   reset: "\x1b[0m",

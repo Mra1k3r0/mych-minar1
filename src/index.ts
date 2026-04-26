@@ -17,7 +17,7 @@ import {
 } from "./bootstrap/runtime.js";
 
 const debugMode = (process.env.BOT_DEBUG ?? "false").trim().toLowerCase() === "true";
-const logStyle = (process.env.BOT_LOG_STYLE ?? "json").trim().toLowerCase();
+const logStyle = (process.env.BOT_LOG_STYLE ?? "pretty").trim().toLowerCase();
 const prettyMode = logStyle === "pretty";
 const spinnerFrames = ["◐", "◓", "◑", "◒"] as const;
 const color = {

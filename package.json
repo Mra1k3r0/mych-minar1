@@ -42,7 +42,7 @@
     "test:coverage": "c8 --all --src src --include \"src/**/*.ts\" --exclude \"src/**/*.test.ts\" --reporter=lcov --reporter=text-summary node --import tsx --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
-    "@mra1k3r0/gramora": "^0.0.16",
+    "@mra1k3r0/gramora": "^0.1.0",
     "dotenv": "^17.4.2",
     "expr-eval": "^2.0.2",
     "jsonc-parser": "^3.3.1",

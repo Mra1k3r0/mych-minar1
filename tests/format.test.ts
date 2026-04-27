@@ -1,3 +1,4 @@
+import "./setup.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { formatDuration, truncate } from "../src/utils/format.js";

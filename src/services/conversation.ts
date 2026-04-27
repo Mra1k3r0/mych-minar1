@@ -30,11 +30,15 @@ export class ConversationManager {
     }, PRUNE_INTERVAL);
   }
 
+  /**
+   * Returns a copy of the message history for a user.
+   * Defensive copy prevents external mutation from desyncing message count.
+   */
   get(userId: number): ChatMessage[] {
     const entry = this.conversations.get(userId);
     if (!entry) return [];
     entry.lastActivity = Date.now();
-    return entry.messages;
+    return [...entry.messages];
   }
 
   getMode(userId: number): "chat" | "agent" {

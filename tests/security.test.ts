@@ -15,7 +15,17 @@ void test("guardMathExpression should block long expressions", () => {
 });
 
 void test("guardMathExpression should block suspicious keywords", () => {
-  const keywords = ["constructor", "__proto__", "prototype", "process", "require"];
+  const keywords = [
+    "constructor",
+    "__proto__",
+    "prototype",
+    "process",
+    "require",
+    "Function",
+    "eval",
+    "return",
+    "this",
+  ];
   for (const kw of keywords) {
     const result = guardMathExpression(`1 + ${kw}`);
     assert.equal(result.ok, false, `Failed to block ${kw}`);

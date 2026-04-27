@@ -21,6 +21,7 @@ export class ConversationManager {
   private conversations = new Map<number, ConversationEntry>();
   private pruneTimer: ReturnType<typeof setInterval>;
   private lastJournalCleanupAt = 0;
+  private totalMessagesCount = 0;
 
   constructor() {
     mkdirSync(JOURNAL_DIR, { recursive: true });
@@ -29,11 +30,15 @@ export class ConversationManager {
     }, PRUNE_INTERVAL);
   }
 
+  /**
+   * Returns a copy of the message history for a user.
+   * Defensive copy prevents external mutation from desyncing message count.
+   */
   get(userId: number): ChatMessage[] {
     const entry = this.conversations.get(userId);
     if (!entry) return [];
     entry.lastActivity = Date.now();
-    return entry.messages;
+    return [...entry.messages];
   }
 
   getMode(userId: number): "chat" | "agent" {
@@ -57,17 +62,23 @@ export class ConversationManager {
     }
 
     entry.messages.push(message);
+    this.totalMessagesCount++;
     entry.lastActivity = Date.now();
 
     const max = config.bot.maxConversationHistory;
     if (entry.messages.length > max) {
       const overflow = entry.messages.length - max;
       entry.messages.splice(0, overflow);
+      this.totalMessagesCount -= overflow;
     }
     this.journal(userId, { type: "message", mode: entry.mode, message });
   }
 
   clear(userId: number) {
+    const entry = this.conversations.get(userId);
+    if (entry) {
+      this.totalMessagesCount -= entry.messages.length;
+    }
     this.journal(userId, { type: "clear" });
     this.conversations.delete(userId);
   }
@@ -76,12 +87,11 @@ export class ConversationManager {
     return this.conversations.size;
   }
 
+  /**
+   * Performance optimization: return pre-calculated running total in O(1).
+   */
   totalMessages(): number {
-    let total = 0;
-    for (const entry of this.conversations.values()) {
-      total += entry.messages.length;
-    }
-    return total;
+    return this.totalMessagesCount;
   }
 
   private pruneStale() {
@@ -89,6 +99,7 @@ export class ConversationManager {
     for (const [userId, entry] of this.conversations) {
       if (now - entry.lastActivity > CONVERSATION_TTL) {
         this.journal(userId, { type: "prune_ttl", mode: entry.mode });
+        this.totalMessagesCount -= entry.messages.length;
         this.conversations.delete(userId);
       }
     }

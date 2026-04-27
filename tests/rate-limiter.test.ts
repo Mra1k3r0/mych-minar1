@@ -1,3 +1,4 @@
+import "./setup.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GroqRateLimiter } from "../src/services/rate-limiter.js";

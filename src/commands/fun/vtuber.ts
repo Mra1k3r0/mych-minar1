@@ -4,7 +4,7 @@ import { fetch as undiciFetch } from "undici";
 import { randomInt } from "node:crypto";
 import { llm } from "../../container.js";
 
-const VTUBER_API = "http://api-vtuber-rmagesaikidesu.vercel.app/";
+const VTUBER_API = "https://api-vtuber-rmagesaikidesu.vercel.app/";
 const VTUBERS = [
   "gura",
   "pekora",

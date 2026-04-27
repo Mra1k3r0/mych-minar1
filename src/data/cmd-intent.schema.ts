@@ -42,7 +42,7 @@ export function normalizeCommandIntentMap(
   raw: unknown,
 ): Record<string, NormalizedCommandIntentMeta> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("Invalid command-intent.json: expected object map");
+    throw new Error("Invalid cmd-intent.json: expected object map");
   }
   const src = raw as Record<string, CommandIntentMetaInput>;
   const out: Record<string, NormalizedCommandIntentMeta> = {};

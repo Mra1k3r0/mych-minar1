@@ -1,6 +1,16 @@
-import { Controller, Command, CallbackQuery, On } from "@mra1k3r0/gramora";
+import {
+  Controller,
+  Command,
+  CallbackQuery,
+  On,
+  Keyboard,
+  renderTelegramRichText,
+} from "@mra1k3r0/gramora";
 import type { BaseContext } from "@mra1k3r0/gramora";
-import { Keyboard } from "@mra1k3r0/gramora";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { writeFile, unlink } from "node:fs/promises";
 import { config } from "../config.js";
 import { agentExecutor, conversations, llm } from "../container.js";
 import { commandRegistry } from "../commands/index.js";
@@ -9,39 +19,100 @@ import { RateLimitError } from "../services/llm.js";
 import { codeBlock, truncate } from "../utils/format.js";
 import { guardMathExpression } from "../utils/security.js";
 import { buildTelegramContext } from "../services/telegram-context.js";
-import { renderTelegramRichText } from "@mra1k3r0/gramora";
 import { Parser } from "expr-eval";
 import { FunController } from "./fun.controller.js";
 import { CoreController } from "./core.controller.js";
 import { AdminController } from "./admin.controller.js";
-import { normalizeCommandIntentMap } from "../data/command-intent.schema.js";
+import { normalizeCommandIntentMap } from "../data/cmd-intent.schema.js";
 import { getCommandIntentData } from "../services/command/store.js";
+import { extractCommandName, findClosestCommandName } from "../commands/suggest.js";
 
 function buildCommandIntentMeta() {
   const raw = normalizeCommandIntentMap(getCommandIntentData());
-  const out: Record<string, (typeof raw)[string]> = {};
+  const out: Partial<Record<string, (typeof raw)[string]>> = {};
   for (const [name, meta] of Object.entries(raw)) {
     const fromRegistry = commandRegistry.get(name);
-    if (!fromRegistry) continue;
     out[name] = {
-      group: meta.group ?? fromRegistry.group,
+      group: meta.group ?? fromRegistry?.group ?? "core",
       ...meta,
     };
   }
   return Object.freeze(out);
 }
 
-const COMMAND_INTENT_META = buildCommandIntentMeta();
+const COMMAND_INTENT_META: Readonly<
+  Partial<Record<string, ReturnType<typeof normalizeCommandIntentMap>[string]>>
+> = buildCommandIntentMeta();
 const COMMAND_KEYWORD_INDEX = Object.freeze(
-  Object.entries(COMMAND_INTENT_META).map(([command, meta]) => ({
-    command,
-    tokens: Object.freeze([
-      ...(meta.matchCommandName ? [command] : []),
-      ...meta.aliases,
-      ...meta.keywords,
-    ]),
-  })),
+  Object.entries(COMMAND_INTENT_META)
+    .map(([command, meta]) => {
+      if (!meta) return null;
+      return {
+        command,
+        tokens: Object.freeze([
+          ...(meta.matchCommandName ? [command] : []),
+          ...meta.aliases,
+          ...meta.keywords,
+        ]),
+      };
+    })
+    .filter((row): row is { command: string; tokens: readonly string[] } => row !== null),
 );
+const COMMAND_ALIAS_INDEX = Object.freeze(
+  Object.entries(COMMAND_INTENT_META).reduce<Record<string, string>>((acc, [command, meta]) => {
+    if (!meta) return acc;
+    for (const alias of meta.aliases) {
+      const key = alias.trim().toLowerCase();
+      if (!key) continue;
+      if (acc[key] || commandRegistry.get(key)) continue;
+      acc[key] = command;
+    }
+    return acc;
+  }, {}),
+);
+
+function resolveAliasTarget(commandName: string): string | null {
+  const key = commandName.trim().toLowerCase();
+  if (!key) return null;
+  const staticHit = COMMAND_ALIAS_INDEX[key];
+  if (staticHit) return staticHit;
+  try {
+    const live = normalizeCommandIntentMap(getCommandIntentData());
+    for (const [command, meta] of Object.entries(live)) {
+      if (!commandRegistry.get(command)) continue;
+      if (meta.aliases.includes(key)) return command;
+    }
+  } catch {
+    // Ignore live resolver failure and fallback to normal unknown command flow.
+  }
+  return null;
+}
+
+function metaForCommand(command: string) {
+  const fromMeta = COMMAND_INTENT_META[command];
+  if (fromMeta) return fromMeta;
+  const fromRegistry = commandRegistry.get(command);
+  return {
+    group: fromRegistry?.group ?? "core",
+    autoExecutable: false,
+    requiresArgs: false,
+    argsHint: "optional",
+    examples: [command],
+    keywords: [],
+    aliases: [],
+    matchCommandName: true,
+    neverNeedsClarify: false,
+    clarifyPrompt: `what should i use for /${command}?`,
+  };
+}
+
+type AiCommandRunner = (gram: BaseContext) => Promise<void>;
+export const aiCommandBridge: {
+  ask?: AiCommandRunner;
+  chat?: AiCommandRunner;
+  agent?: AiCommandRunner;
+  clear?: AiCommandRunner;
+} = {};
 
 @Controller()
 export class AiController {
@@ -49,7 +120,7 @@ export class AiController {
   private lastAutoAction = new Map<number, { command: string; args: string; ts: number }>();
   private readonly autoExecutableCommands = new Set(
     Object.entries(COMMAND_INTENT_META)
-      .filter(([, meta]) => meta.autoExecutable)
+      .filter(([, meta]) => Boolean(meta?.autoExecutable))
       .map(([name]) => name),
   );
   private readonly mathParser = new Parser({
@@ -60,6 +131,13 @@ export class AiController {
       in: false,
     },
   });
+
+  constructor() {
+    aiCommandBridge.ask = this.runAskCommand.bind(this);
+    aiCommandBridge.chat = this.runChatModeCommand.bind(this);
+    aiCommandBridge.agent = this.runAgentModeCommand.bind(this);
+    aiCommandBridge.clear = this.runClearCommand.bind(this);
+  }
 
   private async decideAssistantAction(
     text: string,
@@ -280,16 +358,19 @@ export class AiController {
   }
 
   private commandCatalogJson(): string {
-    const catalog = commandRegistry.all().map((c) => ({
-      name: c.name,
-      slash: `/${c.name}`,
-      group: c.group,
-      description: c.description,
-      autoExecutable: this.autoExecutableCommands.has(c.name),
-      requiresArgs: COMMAND_INTENT_META[c.name].requiresArgs,
-      argsHint: COMMAND_INTENT_META[c.name].argsHint,
-      examples: COMMAND_INTENT_META[c.name].examples,
-    }));
+    const catalog = commandRegistry.all().map((c) => {
+      const meta = metaForCommand(c.name);
+      return {
+        name: c.name,
+        slash: `/${c.name}`,
+        group: c.group,
+        description: c.description,
+        autoExecutable: this.autoExecutableCommands.has(c.name),
+        requiresArgs: meta.requiresArgs,
+        argsHint: meta.argsHint,
+        examples: meta.examples,
+      };
+    });
     return JSON.stringify(catalog, null, 2);
   }
 
@@ -443,15 +524,15 @@ export class AiController {
   }
 
   private commandLikelyNeedsArgs(command: string): boolean {
-    return COMMAND_INTENT_META[command].requiresArgs;
+    return metaForCommand(command).requiresArgs;
   }
 
   private commandNeverNeedsClarify(command: string): boolean {
-    return COMMAND_INTENT_META[command].neverNeedsClarify;
+    return metaForCommand(command).neverNeedsClarify;
   }
 
   private defaultClarifyPrompt(command: string): string {
-    return COMMAND_INTENT_META[command].clarifyPrompt;
+    return metaForCommand(command).clarifyPrompt;
   }
 
   private async shouldClarifyCommand(
@@ -658,19 +739,92 @@ export class AiController {
   }
 
   private async sendAi(gram: BaseContext, text: string, raw = false) {
+    const shouldUploadAsFile = this.shouldUploadAiAsFile(text);
+    if (gram.chatId && shouldUploadAsFile) {
+      const ext = this.inferCodeExtension(text);
+      const tempPath = path.join(tmpdir(), `minar1-ai-${randomUUID()}.${ext}`);
+      try {
+        await writeFile(tempPath, text, "utf8");
+        const apiWithDocument = gram.api as unknown as {
+          sendDocument: (payload: {
+            chat_id: number | string;
+            document: string;
+            caption?: string;
+          }) => Promise<unknown>;
+        };
+        await apiWithDocument.sendDocument({
+          chat_id: gram.chatId,
+          document: tempPath,
+          caption: "AI response attached as file (long code output).",
+        });
+        return;
+      } catch {
+        // Fallback to normal chunked send below.
+      } finally {
+        await unlink(tempPath).catch(() => undefined);
+      }
+    }
     const chunks = this.splitTelegramChunks(text, 3200);
     for (const chunk of chunks) {
       if (gram.chatId) {
         const rendered = raw ? chunk : renderTelegramRichText(chunk);
-        await gram.api.sendMessage({
-          chat_id: gram.chatId,
-          text: rendered,
-          ...(raw ? {} : { parse_mode: "HTML" as const }),
-        });
+        try {
+          await gram.api.sendMessage({
+            chat_id: gram.chatId,
+            text: rendered,
+            ...(raw ? {} : { parse_mode: "HTML" as const }),
+          });
+        } catch {
+          // Telegram may reject formatted payloads (400 parse/length edge cases).
+          // Fallback to plain text so AI replies still go through.
+          await gram.api.sendMessage({
+            chat_id: gram.chatId,
+            text: chunk,
+          });
+        }
       } else {
         await gram.send(chunk);
       }
     }
+  }
+
+  private shouldUploadAiAsFile(text: string): boolean {
+    const hasFence = /```[\s\S]*?```/.test(text);
+    const isLong = text.length > 3000;
+    return hasFence && isLong;
+  }
+
+  private inferCodeExtension(text: string): string {
+    const lang = text.match(/```([a-zA-Z0-9_+#.-]+)/)?.[1]?.toLowerCase() ?? "";
+    const map: Record<string, string> = {
+      ts: "ts",
+      typescript: "ts",
+      js: "js",
+      javascript: "js",
+      py: "py",
+      python: "py",
+      go: "go",
+      rs: "rs",
+      rust: "rs",
+      java: "java",
+      c: "c",
+      cpp: "cpp",
+      cxx: "cpp",
+      cc: "cpp",
+      cs: "cs",
+      sh: "sh",
+      bash: "sh",
+      zsh: "sh",
+      json: "json",
+      yaml: "yaml",
+      yml: "yml",
+      html: "html",
+      css: "css",
+      sql: "sql",
+      md: "md",
+      markdown: "md",
+    };
+    return map[lang] ?? "txt";
   }
 
   private commandCatalogText(): string {
@@ -844,7 +998,7 @@ export class AiController {
     if (direct?.[1]) {
       const probe = direct[1].toLowerCase();
       const mapped = Object.keys(COMMAND_INTENT_META).find(
-        (name) => name === probe || COMMAND_INTENT_META[name].aliases.includes(probe),
+        (name) => name === probe || metaForCommand(name).aliases.includes(probe),
       );
       if (mapped)
         return { command: mapped, args: typeof direct[2] === "string" ? direct[2].trim() : "" };
@@ -1288,8 +1442,7 @@ export class AiController {
     ];
   }
 
-  @Command("ask")
-  async ask(gram: BaseContext) {
+  private async runAskCommand(gram: BaseContext) {
     const question = (gram.text ?? "").split(/\s+/).slice(1).join(" ").trim();
     if (!question) {
       await gram.send("Usage: /ask `<your question>`");
@@ -1318,8 +1471,7 @@ export class AiController {
     }
   }
 
-  @Command("chat")
-  async chatMode(gram: BaseContext) {
+  private async runChatModeCommand(gram: BaseContext) {
     const userId = gram.fromId;
     if (!userId) return;
     conversations.setMode(userId, "chat");
@@ -1329,8 +1481,7 @@ export class AiController {
     );
   }
 
-  @Command("agent")
-  async agentMode(gram: BaseContext) {
+  private async runAgentModeCommand(gram: BaseContext) {
     const userId = gram.fromId;
     if (!userId) return;
     conversations.setMode(userId, "agent");
@@ -1340,12 +1491,31 @@ export class AiController {
     );
   }
 
-  @Command("clear")
-  async clear(gram: BaseContext) {
+  private async runClearCommand(gram: BaseContext) {
     const userId = gram.fromId;
     if (!userId) return;
     conversations.clear(userId);
     await gram.send("🗑 Cleared.");
+  }
+
+  @Command("ask")
+  async ask(gram: BaseContext) {
+    await commandRegistry.run("ask", gram);
+  }
+
+  @Command("chat")
+  async chatMode(gram: BaseContext) {
+    await commandRegistry.run("chat", gram);
+  }
+
+  @Command("agent")
+  async agentMode(gram: BaseContext) {
+    await commandRegistry.run("agent", gram);
+  }
+
+  @Command("clear")
+  async clear(gram: BaseContext) {
+    await commandRegistry.run("clear", gram);
   }
 
   @CallbackQuery("mode:*")
@@ -1376,7 +1546,36 @@ export class AiController {
     const text = gram.text;
     const userId = gram.fromId;
     if (!text || !userId) return;
-    if (text.startsWith("/")) return;
+    if (text.startsWith("/")) {
+      const cmdName = extractCommandName(text);
+      if (!cmdName) return;
+      if (commandRegistry.get(cmdName)) return;
+      const aliasTarget = resolveAliasTarget(cmdName);
+      if (aliasTarget) {
+        if (!commandRegistry.get(aliasTarget)) {
+          await gram.send(`"${cmdName}" alias is mapped but "/${aliasTarget}" is not loaded.`);
+          return;
+        }
+        const args = text.split(/\s+/).slice(1).join(" ").trim();
+        const patchedText = `/${aliasTarget}${args ? ` ${args}` : ""}`;
+        const patchedGram = new Proxy(gram, {
+          get(target, prop, receiver) {
+            if (prop === "text") return patchedText;
+            const value: unknown = Reflect.get(target, prop, receiver);
+            return value;
+          },
+        });
+        const executed = await commandRegistry.run(aliasTarget, patchedGram);
+        if (executed) return;
+      }
+      const suggestion = findClosestCommandName(cmdName, commandRegistry.all());
+      if (suggestion) {
+        await gram.send(`"${cmdName}" isnt available. you mean "/${suggestion}"?`);
+        return;
+      }
+      await gram.send(`"${cmdName}" isnt available.`);
+      return;
+    }
 
     const fast = this.fastPath(gram, text);
     if (fast) {

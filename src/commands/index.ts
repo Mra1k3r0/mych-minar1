@@ -1,39 +1,58 @@
-// Heads up: importing each file auto-registers that command in the shared registry.
-
-import "./core/start.js";
-import "./core/help.js";
-import "./core/ping.js";
-import "./core/uptime.js";
-import "./core/id.js";
-
-import "./ai/ask.js";
-import "./ai/chat.js";
-import "./ai/agent.js";
-import "./ai/clear.js";
-
-import "./admin/stats.js";
-import "./admin/status.js";
-
-import "./fun/quote.js";
-import "./fun/fact.js";
-import "./fun/meme.js";
-import "./fun/roll.js";
-import "./fun/choose.js";
-import "./fun/flip.js";
-import "./fun/8ball.js";
-import "./fun/rps.js";
-import "./fun/cat.js";
-import "./fun/dog.js";
-import "./fun/neko.js";
-import "./fun/hug.js";
-import "./fun/kiss.js";
-import "./fun/pat.js";
-import "./fun/cuddle.js";
-import "./fun/slap.js";
-import "./fun/vtuber.js";
-import "./fun/randomcolor.js";
-import "./fun/play.js";
-import "./fun/video.js";
+import { readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export { commandRegistry } from "./registry.js";
 export type { CommandDef } from "./types.js";
+
+const EXCLUDED_FILES = new Set([
+  "index.ts",
+  "registry.ts",
+  "types.ts",
+  "suggest.ts",
+  "index.js",
+  "registry.js",
+  "types.js",
+  "suggest.js",
+]);
+let commandsLoaded = false;
+
+function normalizeFileKey(filePath: string): string {
+  const normalized = path.resolve(filePath).replace(/\\/g, "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function collectCommandModuleFiles(dir: string): string[] {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectCommandModuleFiles(full));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!entry.name.endsWith(".js") && !entry.name.endsWith(".ts")) continue;
+    if (EXCLUDED_FILES.has(entry.name)) continue;
+    files.push(full);
+  }
+
+  return files;
+}
+
+export async function loadCommandModules(): Promise<void> {
+  if (commandsLoaded) return;
+  const root = path.dirname(fileURLToPath(import.meta.url));
+  const discovered = collectCommandModuleFiles(root);
+  const uniqueByKey = new Map<string, string>();
+  for (const file of discovered) {
+    const key = normalizeFileKey(file);
+    if (!uniqueByKey.has(key)) uniqueByKey.set(key, file);
+  }
+  const files = [...uniqueByKey.values()].sort((a, b) => a.localeCompare(b));
+  for (const file of files) {
+    await import(pathToFileURL(file).href);
+  }
+  commandsLoaded = true;
+}

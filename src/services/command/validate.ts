@@ -1,5 +1,5 @@
 import { commandRegistry } from "../../commands/index.js";
-import { normalizeCommandIntentMap } from "../../data/command-intent.schema.js";
+import { normalizeCommandIntentMap } from "../../data/cmd-intent.schema.js";
 import { getCommandIntentData } from "./store.js";
 
 export function validateCommandIntentConsistency(): void {
@@ -12,10 +12,10 @@ export function validateCommandIntentConsistency(): void {
 
   const errors: string[] = [];
   if (missingInIntent.length > 0) {
-    errors.push(`Missing in command-intent.json: ${missingInIntent.join(", ")}`);
+    errors.push(`Missing in cmd-intent.json: ${missingInIntent.join(", ")}`);
   }
   if (unknownInIntent.length > 0) {
-    errors.push(`Unknown keys in command-intent.json: ${unknownInIntent.join(", ")}`);
+    errors.push(`Unknown keys in cmd-intent.json: ${unknownInIntent.join(", ")}`);
   }
 
   if (errors.length > 0) {

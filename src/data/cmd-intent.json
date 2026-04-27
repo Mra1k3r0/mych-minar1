@@ -140,6 +140,73 @@
   },
   "start": { "group": "core", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["start"], "keywords": ["start", "begin"], "neverNeedsClarify": true },
   "id": { "group": "core", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["id"], "keywords": ["id"], "neverNeedsClarify": true },
+  "userinfo": {
+    "group": "core",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["userinfo", "who am i"],
+    "keywords": ["userinfo", "user info", "my info", "profile"],
+    "neverNeedsClarify": true
+  },
+  "chatinfo": {
+    "group": "core",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["chatinfo", "chat info"],
+    "keywords": ["chatinfo", "chat info", "group info"],
+    "neverNeedsClarify": true
+  },
+  "botinfo": {
+    "group": "core",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["botinfo", "bot info"],
+    "keywords": ["botinfo", "bot info", "about bot"],
+    "neverNeedsClarify": true
+  },
+  "define": {
+    "group": "core",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "word",
+    "examples": ["define serendipity"],
+    "keywords": ["define", "meaning", "dictionary", "definition"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "What word should I define?"
+  },
+  "google": {
+    "group": "core",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "search query",
+    "examples": ["google youtubei.js docs"],
+    "keywords": ["google", "search web", "look up"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "What should I search on Google?"
+  },
+  "wiki": {
+    "group": "core",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "topic",
+    "examples": ["wiki alan turing"],
+    "keywords": ["wiki", "wikipedia", "encyclopedia"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "What topic should I search on Wikipedia?"
+  },
+  "wakatime": {
+    "group": "core",
+    "autoExecutable": true,
+    "requiresArgs": true,
+    "argsHint": "username and optional range",
+    "examples": ["wakatime mra1k3r0", "wakatime mra1k3r0 last_30_days"],
+    "keywords": ["wakatime", "coding stats", "dev stats", "coding activity"],
+    "neverNeedsClarify": false,
+    "clarifyPrompt": "Give me a WakaTime username. Optional range: last_7_days, last_30_days, last_6_months, last_year, all_time."
+  },
   "ask": {
     "group": "ai",
     "autoExecutable": true,
@@ -153,6 +220,15 @@
   "chat": { "group": "ai", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["chat"], "keywords": ["chat mode"], "neverNeedsClarify": true },
   "agent": { "group": "ai", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["agent"], "keywords": ["agent mode"], "neverNeedsClarify": true },
   "clear": { "group": "ai", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["clear"], "keywords": ["clear chat", "reset chat"], "neverNeedsClarify": true },
+  "restart": {
+    "group": "admin",
+    "autoExecutable": true,
+    "requiresArgs": false,
+    "argsHint": "optional",
+    "examples": ["restart"],
+    "keywords": ["restart", "reboot bot"],
+    "neverNeedsClarify": true
+  },
   "status": { "group": "admin", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["status"], "keywords": ["status"], "neverNeedsClarify": true },
   "stats": { "group": "admin", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["stats"], "keywords": ["stats"], "neverNeedsClarify": true },
   "uptime": { "group": "core", "autoExecutable": true, "requiresArgs": false, "argsHint": "optional", "examples": ["uptime"], "keywords": ["uptime"], "neverNeedsClarify": true },

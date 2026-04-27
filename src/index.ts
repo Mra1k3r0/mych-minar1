@@ -5,7 +5,7 @@ import { CoreController } from "./controllers/core.controller.js";
 import { AiController } from "./controllers/ai.controller.js";
 import { AdminController } from "./controllers/admin.controller.js";
 import { FunController } from "./controllers/fun.controller.js";
-import { commandRegistry } from "./commands/index.js";
+import { commandRegistry, loadCommandModules } from "./commands/index.js";
 import { validateCommandIntentConsistency } from "./services/command/validate.js";
 import { logger } from "./services/observability/logger.js";
 import { createCommandMetricsMiddleware } from "./services/observability/middleware.js";
@@ -231,9 +231,12 @@ const bot = new Gramora({
 
 const launchOptions = resolveLaunchOptions();
 async function bootstrap(): Promise<void> {
-  const commandCount = commandRegistry.all().length;
   installPrettyConsoleBridge();
   printPrettyBanner();
+  await runBootStep("commands", "loading command modules", async () => {
+    await loadCommandModules();
+  });
+  const commandCount = commandRegistry.all().length;
   await runBootStep("middleware", "error + rate-limit + metrics", () => {
     bot.use(createErrorMiddleware());
     bot.use(rateLimiter(config.bot.telegramUserRpmLimit));
@@ -246,7 +249,7 @@ async function bootstrap(): Promise<void> {
     bot.register(FunController);
   });
   await runBootStep(
-    "commands",
+    "intent",
     "validating intent metadata",
     () => {
       validateCommandIntentConsistency();

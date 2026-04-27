@@ -21,10 +21,11 @@ void test("guardMathExpression should block suspicious keywords", () => {
     "prototype",
     "process",
     "require",
-    "Function",
+    "function",
     "eval",
     "return",
     "this",
+    "fUnCtIoN",
   ];
   for (const kw of keywords) {
     const result = guardMathExpression(`1 + ${kw}`);

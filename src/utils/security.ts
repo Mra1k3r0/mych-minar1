@@ -3,7 +3,7 @@
  */
 
 const SUSPICIOUS_KEYWORDS =
-  /\b(constructor|__proto__|prototype|process|require|Function|eval|return|this)\b/i;
+  /\b(constructor|__proto__|prototype|process|require|function|eval|return|this)\b/i;
 const MAX_MATH_EXPR_LENGTH = 200;
 
 export interface GuardResult {

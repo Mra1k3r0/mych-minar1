@@ -7,6 +7,9 @@ function isLikelyRealCode(raw: string): boolean {
   return /[{};]|=>|\b(class|function|const|let|var|import|export|return|if|for|while)\b/.test(raw);
 }
 
+const COMMAND_LINE_RE = /^[-*•]?\s*`?\/[a-zA-Z0-9_]+`?(?:\s*[-:]\s*.+)?$/;
+const COMMAND_TOKEN_RE = /\/[a-zA-Z0-9_]+/g;
+
 function isCommandListBlock(raw: string): boolean {
   const lines = raw.split("\n");
   let commandLineCount = 0;
@@ -18,10 +21,10 @@ function isCommandListBlock(raw: string): boolean {
     const trimmed = line.trim();
     if (!trimmed) continue;
     totalNonEmptyLines++;
-    if (/^[-*•]?\s*`?\/[a-zA-Z0-9_]+`?(?:\s*[-:]\s*.+)?$/.test(trimmed)) {
+    if (COMMAND_LINE_RE.test(trimmed)) {
       commandLineCount++;
     }
-    const matches = trimmed.match(/\/[a-zA-Z0-9_]+/g);
+    const matches = trimmed.match(COMMAND_TOKEN_RE);
     if (matches) {
       commandTokenCount += matches.length;
     }
@@ -40,6 +43,9 @@ export function renderTelegramRichText(input: string): string {
   const codeBlocks: string[] = [];
   let text = input;
 
+  // unique prefix per call to avoid collision with user input or other code blocks
+  const callId = Math.random().toString(36).slice(2, 8);
+
   text = text.replace(/```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, (_f, _lang, code) => {
     const raw = String(code).replace(/\n$/, "");
 
@@ -48,8 +54,8 @@ export function renderTelegramRichText(input: string): string {
       return `\n${raw}\n`;
     }
 
-    // Avoid `_` in tokens; markdown italics transforms can corrupt token text.
-    const token = `@@TGCODEBLOCK${String(codeBlocks.length)}@@`;
+    // Use unique marker without underscores to avoid collision with italic regex
+    const token = `@@TGCODEBLOCK${callId}X${String(codeBlocks.length)}@@`;
     codeBlocks.push(`<pre><code>${escapeHtml(raw)}</code></pre>`);
     return token;
   });
@@ -67,13 +73,16 @@ export function renderTelegramRichText(input: string): string {
   text = text.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
   text = text.replace(/__([^_]+)__/g, "<b>$1</b>");
   text = text.replace(/\*([^\n*]+)\*/g, "<i>$1</i>");
-  text = text.replace(/_([^\n_]+)_/g, "<i>$1</i>");
+  text = text.replace(/_([^\n_]+)_/g, (match) => {
+    // If it looks like our placeholder, don't italicize it yet
+    if (match.startsWith(`_@@TGCODEBLOCK${callId}X`) && match.endsWith("_")) return match;
+    return `<i>${match.slice(1, -1)}</i>`;
+  });
   text = text.replace(/`/g, "");
 
   // optimization: single pass replacement for all code block placeholders
-  text = text.replace(/@@TGCODEBLOCK(\d+)@@/g, (_, index) => codeBlocks[Number(index)] ?? "");
-  // Safety: never leak unresolved placeholder tokens to end users.
-  text = text.replace(/@@TG[A-Z0-9_]+@@/g, "");
+  const placeholderRegex = new RegExp(`@@TGCODEBLOCK${callId}X(\\d+)@@`, "g");
+  text = text.replace(placeholderRegex, (_, index) => codeBlocks[Number(index)] ?? "");
 
   text = text.replace(/\n{3,}/g, "\n\n");
   return text;

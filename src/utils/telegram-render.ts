@@ -7,20 +7,31 @@ function isLikelyRealCode(raw: string): boolean {
   return /[{};]|=>|\b(class|function|const|let|var|import|export|return|if|for|while)\b/.test(raw);
 }
 
+const COMMAND_LINE_RE = /^[-*•]?\s*`?\/[a-zA-Z0-9_]+`?(?:\s*[-:]\s*.+)?$/;
+const COMMAND_TOKEN_RE = /\/[a-zA-Z0-9_]+/g;
+
 function isCommandListBlock(raw: string): boolean {
-  const lines = raw
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return false;
+  const lines = raw.split("\n");
+  let commandLineCount = 0;
+  let totalNonEmptyLines = 0;
+  let commandTokenCount = 0;
 
-  // command-like line: "/id - desc", "- /help", "`/ask`"
-  const commandLineCount = lines.filter((l) =>
-    /^[-*•]?\s*`?\/[a-zA-Z0-9_]+`?(?:\s*[-:]\s*.+)?$/.test(l),
-  ).length;
+  // optimization: single pass to count lines and tokens to reduce array allocations
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    totalNonEmptyLines++;
+    if (COMMAND_LINE_RE.test(trimmed)) {
+      commandLineCount++;
+    }
+    const matches = trimmed.match(COMMAND_TOKEN_RE);
+    if (matches) {
+      commandTokenCount += matches.length;
+    }
+  }
 
-  const commandTokenCount = (raw.match(/\/[a-zA-Z0-9_]+/g) ?? []).length;
-  const ratio = commandLineCount / lines.length;
+  if (totalNonEmptyLines === 0) return false;
+  const ratio = commandLineCount / totalNonEmptyLines;
   return commandTokenCount >= 2 && ratio >= 0.6 && !isLikelyRealCode(raw);
 }
 
@@ -32,6 +43,9 @@ export function renderTelegramRichText(input: string): string {
   const codeBlocks: string[] = [];
   let text = input;
 
+  // unique prefix per call to avoid collision with user input or other code blocks
+  const callId = Math.random().toString(36).slice(2, 8);
+
   text = text.replace(/```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, (_f, _lang, code) => {
     const raw = String(code).replace(/\n$/, "");
 
@@ -40,8 +54,8 @@ export function renderTelegramRichText(input: string): string {
       return `\n${raw}\n`;
     }
 
-    // Avoid `_` in tokens; markdown italics transforms can corrupt token text.
-    const token = `@@TGCODEBLOCK${String(codeBlocks.length)}@@`;
+    // Use unique marker without underscores to avoid collision with italic regex
+    const token = `@@TGCODEBLOCK${callId}X${String(codeBlocks.length)}@@`;
     codeBlocks.push(`<pre><code>${escapeHtml(raw)}</code></pre>`);
     return token;
   });
@@ -59,14 +73,16 @@ export function renderTelegramRichText(input: string): string {
   text = text.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
   text = text.replace(/__([^_]+)__/g, "<b>$1</b>");
   text = text.replace(/\*([^\n*]+)\*/g, "<i>$1</i>");
-  text = text.replace(/_([^\n_]+)_/g, "<i>$1</i>");
+  text = text.replace(/_([^\n_]+)_/g, (match) => {
+    // If it looks like our placeholder, don't italicize it yet
+    if (match.startsWith(`_@@TGCODEBLOCK${callId}X`) && match.endsWith("_")) return match;
+    return `<i>${match.slice(1, -1)}</i>`;
+  });
   text = text.replace(/`/g, "");
 
-  for (let i = 0; i < codeBlocks.length; i++) {
-    text = text.replace(`@@TGCODEBLOCK${String(i)}@@`, codeBlocks[i]);
-  }
-  // Safety: never leak unresolved placeholder tokens to end users.
-  text = text.replace(/@@TG[A-Z0-9_]+@@/g, "");
+  // optimization: single pass replacement for all code block placeholders
+  const placeholderRegex = new RegExp(`@@TGCODEBLOCK${callId}X(\\d+)@@`, "g");
+  text = text.replace(placeholderRegex, (_, index) => codeBlocks[Number(index)] ?? "");
 
   text = text.replace(/\n{3,}/g, "\n\n");
   return text;

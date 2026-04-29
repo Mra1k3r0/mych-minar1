@@ -706,7 +706,10 @@ export class AiController {
     const topRatio = top / tokens.length;
     const uniqueRatio = freq.size / Math.max(tokens.length, 1);
 
-    const nonAscii = Array.from(t).filter((ch) => ch.charCodeAt(0) > 127).length;
+    let nonAscii = 0;
+    for (let i = 0; i < t.length; i++) {
+      if (t.charCodeAt(i) > 127) nonAscii++;
+    }
     const nonAsciiRatio = nonAscii / t.length;
     const alphaWords = (t.match(/[a-zA-Z]{3,}/g) ?? []).length;
     const sentenceLike = /[.!?]/.test(t) && alphaWords >= 5;

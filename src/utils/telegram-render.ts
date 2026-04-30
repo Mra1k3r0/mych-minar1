@@ -11,12 +11,14 @@ const COMMAND_LINE_RE = /^[-*•]?\s*`?\/[a-zA-Z0-9_]+`?(?:\s*[-:]\s*.+)?$/;
 const COMMAND_TOKEN_RE = /\/[a-zA-Z0-9_]+/g;
 
 function isCommandListBlock(raw: string): boolean {
+  // optimization: early exit if it looks like code
+  if (isLikelyRealCode(raw)) return false;
+
   const lines = raw.split("\n");
   let commandLineCount = 0;
   let totalNonEmptyLines = 0;
-  let commandTokenCount = 0;
 
-  // optimization: single pass to count lines and tokens to reduce array allocations
+  // optimization: single pass for line counts
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -24,15 +26,17 @@ function isCommandListBlock(raw: string): boolean {
     if (COMMAND_LINE_RE.test(trimmed)) {
       commandLineCount++;
     }
-    const matches = trimmed.match(COMMAND_TOKEN_RE);
-    if (matches) {
-      commandTokenCount += matches.length;
-    }
   }
 
   if (totalNonEmptyLines === 0) return false;
   const ratio = commandLineCount / totalNonEmptyLines;
-  return commandTokenCount >= 2 && ratio >= 0.6 && !isLikelyRealCode(raw);
+  if (ratio < 0.6) return false;
+
+  // optimization: move token match out of loop to run once on the full block
+  const matches = raw.match(COMMAND_TOKEN_RE);
+  const commandTokenCount = matches ? matches.length : 0;
+
+  return commandTokenCount >= 2;
 }
 
 /**

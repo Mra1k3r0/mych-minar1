@@ -706,9 +706,18 @@ export class AiController {
     const topRatio = top / tokens.length;
     const uniqueRatio = freq.size / Math.max(tokens.length, 1);
 
-    const nonAscii = Array.from(t).filter((ch) => ch.charCodeAt(0) > 127).length;
+    // optimization: manual loop avoids intermediate array allocations from Array.from()
+    let nonAscii = 0;
+    for (const ch of t) {
+      if (ch.charCodeAt(0) > 127) nonAscii++;
+    }
     const nonAsciiRatio = nonAscii / t.length;
-    const alphaWords = (t.match(/[a-zA-Z]{3,}/g) ?? []).length;
+
+    // optimization: using exec in a loop prevents allocating a full match array
+    let alphaWords = 0;
+    const wordRe = /[a-zA-Z]{3,}/g;
+    while (wordRe.exec(t) !== null) alphaWords++;
+
     const sentenceLike = /[.!?]/.test(t) && alphaWords >= 5;
 
     if (sentenceLike && nonAsciiRatio < 0.3 && topRatio < 0.35) return false;

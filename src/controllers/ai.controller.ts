@@ -16,7 +16,7 @@ import { agentExecutor, conversations, llm } from "../container.js";
 import { commandRegistry } from "../commands/index.js";
 import type { ChatMessage } from "../services/llm.js";
 import { RateLimitError } from "../services/llm.js";
-import { codeBlock, truncate } from "../utils/format.js";
+import { codeBlock } from "../utils/format.js";
 import { guardMathExpression } from "../utils/security.js";
 import { buildTelegramContext } from "../services/telegram-context.js";
 import { Parser } from "expr-eval";
@@ -1705,7 +1705,7 @@ export class AiController {
       return;
     }
     console.error("[AI Error]", err);
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    await gram.send(`❌ AI error: ${truncate(msg, 200)}`);
+    // use generic message to prevent internal error leakage
+    await gram.send("❌ AI is currently unavailable. Please try again later.");
   }
 }

@@ -697,17 +697,31 @@ export class AiController {
     const hasLongRun = /(.)\1{8,}/.test(t);
     if (t.length < 160) return hasLongRun;
 
-    const tokens = t.toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length < 12) return hasLongRun;
+    // optimization: avoid multiple passes and large array allocations
+    const lowerT = t.toLowerCase();
+    const rawTokens = lowerT.split(/\s+/);
     const freq = new Map<string, number>();
-    for (const tok of tokens) freq.set(tok, (freq.get(tok) ?? 0) + 1);
-    let top = 0;
-    for (const n of freq.values()) top = Math.max(top, n);
-    const topRatio = top / tokens.length;
-    const uniqueRatio = freq.size / Math.max(tokens.length, 1);
+    let totalTokens = 0;
+    for (const tok of rawTokens) {
+      if (!tok) continue;
+      totalTokens++;
+      freq.set(tok, (freq.get(tok) ?? 0) + 1);
+    }
 
-    const nonAscii = Array.from(t).filter((ch) => ch.charCodeAt(0) > 127).length;
+    if (totalTokens < 12) return hasLongRun;
+    let top = 0;
+    for (const n of freq.values()) {
+      if (n > top) top = n;
+    }
+    const topRatio = top / totalTokens;
+    const uniqueRatio = freq.size / totalTokens;
+
+    let nonAscii = 0;
+    for (let i = 0; i < t.length; i++) {
+      if (t.charCodeAt(i) > 127) nonAscii++;
+    }
     const nonAsciiRatio = nonAscii / t.length;
+
     const alphaWords = (t.match(/[a-zA-Z]{3,}/g) ?? []).length;
     const sentenceLike = /[.!?]/.test(t) && alphaWords >= 5;
 

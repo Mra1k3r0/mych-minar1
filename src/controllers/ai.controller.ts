@@ -697,16 +697,27 @@ export class AiController {
     const hasLongRun = /(.)\1{8,}/.test(t);
     if (t.length < 160) return hasLongRun;
 
-    const tokens = t.toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length < 12) return hasLongRun;
+    // optimization: call toLowerCase() once, skip empty strings during frequency count
+    const rawTokens = t.toLowerCase().split(/\s+/);
     const freq = new Map<string, number>();
-    for (const tok of tokens) freq.set(tok, (freq.get(tok) ?? 0) + 1);
+    let totalTokens = 0;
+    for (const tok of rawTokens) {
+      if (!tok) continue;
+      freq.set(tok, (freq.get(tok) ?? 0) + 1);
+      totalTokens++;
+    }
+
+    if (totalTokens < 12) return hasLongRun;
     let top = 0;
     for (const n of freq.values()) top = Math.max(top, n);
-    const topRatio = top / tokens.length;
-    const uniqueRatio = freq.size / Math.max(tokens.length, 1);
+    const topRatio = top / totalTokens;
+    const uniqueRatio = freq.size / Math.max(totalTokens, 1);
 
-    const nonAscii = Array.from(t).filter((ch) => ch.charCodeAt(0) > 127).length;
+    // optimization: use for...of loop for non-ascii counting to avoid Array.from overhead
+    let nonAscii = 0;
+    for (const ch of t) {
+      if (ch.charCodeAt(0) > 127) nonAscii++;
+    }
     const nonAsciiRatio = nonAscii / t.length;
     const alphaWords = (t.match(/[a-zA-Z]{3,}/g) ?? []).length;
     const sentenceLike = /[.!?]/.test(t) && alphaWords >= 5;

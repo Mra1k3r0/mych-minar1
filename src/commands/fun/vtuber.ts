@@ -1,10 +1,10 @@
 import { commandRegistry } from "../registry.js";
 import type { CommandDef } from "../types.js";
-import { fetch as undiciFetch } from "undici";
+import { Fetch } from "../../services/http/undici.js";
 import { randomInt } from "node:crypto";
 import { llm } from "../../container.js";
 
-const VTUBER_API = "http://api-vtuber-rmagesaikidesu.vercel.app/";
+const VTUBER_API = "https://api-vtuber-rmagesaikidesu.vercel.app/";
 const VTUBERS = [
   "gura",
   "pekora",
@@ -47,13 +47,12 @@ const isVtuberName = (value: string): value is VtuberName =>
   (VTUBERS as readonly string[]).includes(value);
 
 async function fetchRandomVtuberImage(character: VtuberName): Promise<VtuberApiResponse> {
-  const response = await undiciFetch(`${VTUBER_API}?character=${encodeURIComponent(character)}`);
-  if (!response.ok) throw new Error(`VTuber API HTTP ${String(response.status)}`);
-  const payload = (await response.json()) as Partial<VtuberApiResponse>;
-  if (payload.status !== "ok" || !payload.url || !payload.name) {
+  const url = `${VTUBER_API}?character=${encodeURIComponent(character)}`;
+  const payload = await Fetch<VtuberApiResponse>(url, { mode: "strict" });
+  if (!payload.url || !payload.name) {
     throw new Error("Invalid VTuber payload");
   }
-  return payload as VtuberApiResponse;
+  return payload;
 }
 
 function getCommandArgs(gram: Gram): string {

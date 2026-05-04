@@ -1,5 +1,6 @@
 import { commandRegistry } from "../registry.js";
 import { findClosestCommandName } from "../suggest.js";
+import { sendRichText } from "../../services/telegram/rich.js";
 
 export const CMD_HELP = commandRegistry.register({
   name: "help",
@@ -20,18 +21,18 @@ export const CMD_HELP = commandRegistry.register({
           `perm: ${String(command.perm ?? (command.admin ? 1 : 0))}`,
           `cooldown: ${String(command.cooldownSeconds ?? 0)}s`,
         ];
-        await gram.send(details.join("\n"));
+        await sendRichText(gram, details.join("\n"));
         return;
       }
       const suggestion = findClosestCommandName(arg, commandRegistry.all());
       if (suggestion) {
-        await gram.send(`"${arg}" isnt available. you mean "/${suggestion}"?`);
+        await sendRichText(gram, `"${arg}" isnt available. you mean "/${suggestion}"?`);
         return;
       }
-      await gram.send(`"${arg}" isnt available.`);
+      await sendRichText(gram, `"${arg}" isnt available.`);
       return;
     }
     const lines = commandRegistry.all().map((c) => `/${c.name} — ${c.description}`);
-    await gram.send(["*Commands*", "", ...lines].join("\n"));
+    await sendRichText(gram, ["**Commands**", "", ...lines].join("\n"));
   },
 });

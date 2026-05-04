@@ -2,6 +2,7 @@ import { commandRegistry } from "../registry.js";
 import type { CommandDef } from "../types.js";
 import { GOOGLE_RESULT_LIMIT, searchGoogle } from "../../services/search/google-search.js";
 import { Fetch } from "../../services/http/undici.js";
+import { renderTelegramRichText } from "@mra1k3r0/gramora";
 
 type Gram = Parameters<NonNullable<CommandDef["run"]>>[0];
 type GooglePickResult = {
@@ -141,17 +142,18 @@ async function sendGoogleText(
   replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
 ) {
   const replyTo = gram.message?.message_id;
+  const html = renderTelegramRichText(text);
   if (gram.chatId) {
     try {
       await gram.api.sendMessage({
         chat_id: gram.chatId,
-        text,
-        parse_mode: "Markdown",
+        text: html,
+        parse_mode: "HTML",
         ...(replyTo !== undefined ? { reply_to_message_id: replyTo } : {}),
         ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
       });
     } catch {
-      // Fallback: raw text avoids Telegram markdown parse failures on snippets.
+      // Fallback: plain text avoids Telegram parse failures on edge-case snippets.
       await gram.api.sendMessage({
         chat_id: gram.chatId,
         text,
@@ -171,18 +173,19 @@ async function sendGooglePhoto(
   replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
 ) {
   const replyTo = gram.message?.message_id;
+  const captionHtml = renderTelegramRichText(caption);
   if (gram.chatId) {
     try {
       await gram.api.sendPhoto({
         chat_id: gram.chatId,
         photo,
-        caption,
-        parse_mode: "Markdown",
+        caption: captionHtml,
+        parse_mode: "HTML",
         ...(replyTo !== undefined ? { reply_to_message_id: replyTo } : {}),
         ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
       });
     } catch {
-      // Fallback: raw caption avoids Telegram markdown parse failures.
+      // Fallback: plain caption avoids Telegram parse failures.
       await gram.api.sendPhoto({
         chat_id: gram.chatId,
         photo,
@@ -301,7 +304,7 @@ export async function handleGoogleSection(gram: Gram): Promise<void> {
       return;
     }
     await gram.answer("local");
-    const lines = ["📍 *Local spots*"];
+    const lines = ["📍 **Local spots**"];
     for (const [idx, place] of state.localPlaces.entries()) {
       const meta = [
         place.type,
@@ -407,7 +410,7 @@ async function runGoogleSearch(gram: Gram, query: string): Promise<void> {
       return;
     }
     const lines = [
-      "🔎 *Google results*",
+      "🔎 **Google results**",
       `query: ${trimmedQuery}`,
       `results: ${String(results.length)}/${String(GOOGLE_RESULT_LIMIT)}`,
       "",

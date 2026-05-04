@@ -1,5 +1,6 @@
 import { commandRegistry } from "../registry.js";
 import { Fetch } from "../../services/http/undici.js";
+import { sendRichText } from "../../services/telegram/rich.js";
 
 type DictEntry = {
   word?: string;
@@ -18,7 +19,7 @@ export const CMD_DEFINE = commandRegistry.register({
   run: async (gram) => {
     const raw = (gram.text ?? "").split(/\s+/).slice(1).join(" ").trim();
     if (!raw) {
-      await gram.send("usage: /define <word>");
+      await sendRichText(gram, "usage: /define <word>");
       return;
     }
 
@@ -30,7 +31,8 @@ export const CMD_DEFINE = commandRegistry.register({
       const meaning = top.meanings?.[0];
       const def = meaning?.definitions?.[0];
       if (top.word && def?.definition) {
-        await gram.send(
+        await sendRichText(
+          gram,
           [
             `📘 *${top.word}* ${top.phonetic ? `(${top.phonetic})` : ""}`.trim(),
             meaning?.partOfSpeech ? `part of speech: ${meaning.partOfSpeech}` : "",
@@ -44,6 +46,6 @@ export const CMD_DEFINE = commandRegistry.register({
       }
     }
 
-    await gram.send(`No definition found for "${raw}".`);
+    await sendRichText(gram, `No definition found for "${raw}".`);
   },
 });

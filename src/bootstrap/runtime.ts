@@ -1,4 +1,5 @@
 import type { BaseContext, MiddlewareFn } from "@mra1k3r0/gramora";
+import { config } from "../config.js";
 import { logger } from "../services/observability/logger.js";
 
 type Transport = "polling" | "webhook";
@@ -86,7 +87,8 @@ export function createErrorMiddleware(): MiddlewareFn<BaseContext> {
 }
 
 /**
- * Resolves bot transport config from env variables.
+ * Resolves bot transport for launch.
+ * Values come from `bot.config.jsonc` (`transport`, `webhook`) with `.env` overriding when set.
  *
  * @returns Polling launch options or webhook options with normalized fields.
  */
@@ -94,21 +96,30 @@ export function resolveLaunchOptions():
   | { transport: "polling" }
   | {
       transport: "webhook";
-      webhook: { port: number; path?: string; domain?: string; secretToken?: string };
+      webhook: {
+        port: number;
+        host?: string;
+        path?: string;
+        domain?: string;
+        secretToken?: string;
+        tunnel?: boolean;
+        tunnelProvider?: "localtunnel" | "untun";
+      };
     } {
-  const transport: Transport =
-    process.env.BOT_TRANSPORT?.trim().toLowerCase() === "webhook" ? "webhook" : "polling";
+  const transport: Transport = config.bot.transport === "webhook" ? "webhook" : "polling";
   if (transport === "polling") return { transport: "polling" };
 
+  const w = config.bot.webhook ?? { port: 3000 };
   return {
     transport: "webhook",
     webhook: {
-      port: Number.parseInt(process.env.WEBHOOK_PORT ?? "3000", 10),
-      ...(process.env.WEBHOOK_PATH?.trim() ? { path: process.env.WEBHOOK_PATH.trim() } : {}),
-      ...(process.env.WEBHOOK_DOMAIN?.trim() ? { domain: process.env.WEBHOOK_DOMAIN.trim() } : {}),
-      ...(process.env.WEBHOOK_SECRET?.trim()
-        ? { secretToken: process.env.WEBHOOK_SECRET.trim() }
-        : {}),
+      port: w.port,
+      ...(w.host !== undefined ? { host: w.host } : {}),
+      ...(w.path !== undefined ? { path: w.path } : {}),
+      ...(w.domain !== undefined ? { domain: w.domain } : {}),
+      ...(w.secretToken !== undefined ? { secretToken: w.secretToken } : {}),
+      ...(w.tunnel !== undefined ? { tunnel: w.tunnel } : {}),
+      ...(w.tunnelProvider !== undefined ? { tunnelProvider: w.tunnelProvider } : {}),
     },
   };
 }

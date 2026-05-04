@@ -6,6 +6,7 @@ import {
   handleGoogleQaPick,
   handleGoogleSection,
 } from "../commands/core/google.js";
+import { sendRichText } from "../services/telegram/rich.js";
 
 @Controller()
 export class CoreController {
@@ -75,8 +76,8 @@ export class CoreController {
     if (!action) return;
     await gram.answer();
 
-    if (action === "help") await gram.send("Use /help to see all commands.");
-    if (action === "status") await gram.send("Use /status to see bot status.");
+    if (action === "help") await sendRichText(gram, "Use /help to see all commands.");
+    if (action === "status") await sendRichText(gram, "Use /status to see bot status.");
   }
 
   @CallbackQuery("gsel:*")

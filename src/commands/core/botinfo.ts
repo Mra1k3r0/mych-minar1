@@ -1,4 +1,5 @@
 import { config } from "../../config.js";
+import { sendRichText } from "../../services/telegram/rich.js";
 import { commandRegistry } from "../registry.js";
 
 export const CMD_BOTINFO = commandRegistry.register({
@@ -7,9 +8,10 @@ export const CMD_BOTINFO = commandRegistry.register({
   group: "core",
   cooldownSeconds: 3,
   run: async (gram) => {
-    await gram.send(
+    await sendRichText(
+      gram,
       [
-        "🤖 *Bot Info*",
+        "🤖 **Bot Info**",
         `Name: minar1`,
         `Provider: \`${config.llm.provider}\``,
         `Model: \`${config.llm.model}\``,

@@ -1,7 +1,7 @@
 import "./setup.js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { renderTelegramRichText } from "../src/utils/telegram-render.js";
+import { renderTelegramRichText } from "@mra1k3r0/gramora";
 
 void describe("renderTelegramRichText", () => {
   void it("should escape HTML and render bold/italic", () => {
@@ -34,11 +34,14 @@ void describe("renderTelegramRichText", () => {
     assert.strictEqual(renderTelegramRichText(input), expected);
   });
 
-  void it("should avoid collision with user-provided placeholder strings", () => {
+  void it("should not leak placeholder artifacts", () => {
     const input = "User said: @@TGCODEBLOCK0@@ and then code:\n```\nreal code\n```";
     const result = renderTelegramRichText(input);
-    assert.ok(result.includes("@@TGCODEBLOCK0@@"), "Should contain user-provided string");
-    assert.ok(result.includes("<pre><code>real code</code></pre>"), "Should contain rendered code block");
+    assert.ok(!result.includes("@@TG"), "Should not contain placeholder artifacts");
+    assert.ok(
+      result.includes("<pre><code>real code</code></pre>"),
+      "Should contain rendered code block",
+    );
   });
 
   void it("should handle many code blocks (stress test)", () => {
@@ -51,7 +54,10 @@ void describe("renderTelegramRichText", () => {
     for (let i = 0; i < count; i++) {
       const idx = String(i);
       assert.ok(result.includes(`Block ${idx}:`), `Should contain label for block ${idx}`);
-      assert.ok(result.includes(`<pre><code>code ${idx}</code></pre>`), `Should contain rendered code for block ${idx}`);
+      assert.ok(
+        result.includes(`<pre><code>code ${idx}</code></pre>`),
+        `Should contain rendered code for block ${idx}`,
+      );
     }
   });
 });

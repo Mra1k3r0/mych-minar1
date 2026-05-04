@@ -1,5 +1,6 @@
 import { commandRegistry } from "../registry.js";
 import { Fetch } from "../../services/http/undici.js";
+import { sendRichText } from "../../services/telegram/rich.js";
 
 type WakaLanguage = {
   name?: string;
@@ -34,14 +35,56 @@ const VALID_RANGES = new Set<WakaRange>([
   "all_time",
 ]);
 
-function parseArgs(text: string): { username: string; range: WakaRange } | null {
+const RANGE_LIST: readonly WakaRange[] = [
+  "last_7_days",
+  "last_30_days",
+  "last_6_months",
+  "last_year",
+  "all_time",
+];
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function rangeCode(range: string): string {
+  return `<code>${escapeHtml(range).replace(/_/g, "&#95;")}</code>`;
+}
+
+function parseArgs(
+  text: string,
+):
+  | { username: string; range: WakaRange }
+  | { error: "missing_username" | "invalid_range"; raw?: string } {
   const args = text.split(/\s+/).slice(1).filter(Boolean);
-  const username = args[0]?.trim();
-  if (!username) return null;
-  const rawRange = args[1]?.trim().toLowerCase();
-  const range = (
-    rawRange && VALID_RANGES.has(rawRange as WakaRange) ? rawRange : "last_7_days"
-  ) as WakaRange;
+  let username = args[0]?.trim();
+  if (!username) return { error: "missing_username" };
+
+  let rawRange = args.slice(1).join(" ").trim();
+  if (username.includes("|")) {
+    const [left, right] = username.split("|", 2);
+    username = left.trim() || username;
+    if (!rawRange && right) rawRange = right.trim();
+  }
+  rawRange = rawRange
+    .replace(/^\|\s*/, "")
+    .replace(/\s*\|$/, "")
+    .trim();
+  if (rawRange.includes("|")) {
+    const parts = rawRange
+      .split("|")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    rawRange = parts[0] ?? "";
+  }
+
+  if (rawRange.length === 0) {
+    return { username, range: "last_7_days" };
+  }
+  if (!VALID_RANGES.has(rawRange as WakaRange)) {
+    return { error: "invalid_range", raw: rawRange };
+  }
+  const range = rawRange as WakaRange;
   return { username, range };
 }
 
@@ -53,10 +96,10 @@ function topList(
   const top = [...items]
     .sort((a, b) => (b.total_seconds ?? 0) - (a.total_seconds ?? 0))
     .slice(0, 3);
-  const lines = [title];
+  const lines = [escapeHtml(title)];
   for (const [idx, item] of top.entries()) {
-    const label = item.name ?? "unknown";
-    const spent = item.text ?? "n/a";
+    const label = escapeHtml(item.name ?? "unknown");
+    const spent = escapeHtml(item.text ?? "n/a");
     lines.push(`${String(idx + 1)}. ${label} - ${spent}`);
   }
   return lines;
@@ -68,10 +111,43 @@ export const CMD_WAKATIME = commandRegistry.register({
   group: "core",
   cooldownSeconds: 5,
   run: async (gram) => {
+    const sendHtml = async (html: string, fallback: string): Promise<void> => {
+      if (gram.chatId) {
+        try {
+          await gram.api.sendMessage({
+            chat_id: gram.chatId,
+            text: html,
+            parse_mode: "HTML",
+          });
+          return;
+        } catch {
+          // fallback to generic rich sender
+        }
+      }
+      await sendRichText(gram, fallback);
+    };
+
     const parsed = parseArgs(gram.text ?? "");
-    if (!parsed) {
-      await gram.send(
-        "usage: /wakatime <username> [last_7_days|last_30_days|last_6_months|last_year|all_time]",
+    if ("error" in parsed) {
+      const usageRanges = RANGE_LIST.map((x) => rangeCode(x)).join(" | ");
+      if (parsed.error === "missing_username") {
+        await sendHtml(
+          `usage: /wakatime &lt;username&gt; [${usageRanges}]`,
+          "usage: /wakatime <username> [last_7_days | last_30_days | last_6_months | last_year | all_time]",
+        );
+        return;
+      }
+      await sendHtml(
+        [
+          `invalid range: ${escapeHtml(parsed.raw ?? "unknown")}`,
+          `use one of: ${usageRanges}`,
+          "example: /wakatime mra1k3r0 <code>last&#95;30&#95;days</code>",
+        ].join("\n"),
+        [
+          `invalid range: ${parsed.raw ?? "unknown"}`,
+          "use one of: last_7_days | last_30_days | last_6_months | last_year | all_time",
+          "example: /wakatime mra1k3r0 last_30_days",
+        ].join("\n"),
       );
       return;
     }
@@ -82,21 +158,22 @@ export const CMD_WAKATIME = commandRegistry.register({
     const stats = response?.data;
 
     if (!stats) {
-      await gram.send(
+      await sendRichText(
+        gram,
         `No public WakaTime stats found for "${username}".\nProfile may be private or username is invalid.`,
       );
       return;
     }
 
     const lines = [
-      `⌚ *WakaTime: ${username}*`,
-      `Range: ${range}`,
-      `Total: ${stats.human_readable_total ?? "n/a"}`,
-      `Daily avg: ${stats.human_readable_daily_average ?? "n/a"}`,
+      `<b>⌚ WakaTime: ${escapeHtml(username)}</b>`,
+      `Range: ${rangeCode(range)}`,
+      `Total: ${escapeHtml(stats.human_readable_total ?? "n/a")}`,
+      `Daily avg: ${escapeHtml(stats.human_readable_daily_average ?? "n/a")}`,
     ];
 
     lines.push(...topList(stats.languages, "Top languages:"));
     lines.push(...topList(stats.projects, "Top projects:"));
-    await gram.send(lines.join("\n"));
+    await sendHtml(lines.join("\n"), lines.join("\n"));
   },
 });

@@ -15,6 +15,11 @@ import {
   createErrorMiddleware,
   resolveLaunchOptions,
 } from "./bootstrap/runtime.js";
+import { syncBotSlashCommands } from "./services/telegram/menu.js";
+import {
+  startFastifyWebhookServer,
+  type WebhookServerRuntime,
+} from "./services/telegram/webhook.js";
 
 const debugMode = (process.env.BOT_DEBUG ?? "false").trim().toLowerCase() === "true";
 const logStyle = (process.env.BOT_LOG_STYLE ?? "pretty").trim().toLowerCase();
@@ -226,10 +231,14 @@ const bot = new Gramora({
   token: config.telegram.token,
   mode: "full",
   hooks: buildRuntimeHooks(),
-  operations: buildRuntimeOperations(),
+  operations: {
+    ...buildRuntimeOperations(),
+    ...(debugMode ? { logWebhookRejects: true } : {}),
+  },
 }).configure({ debug: debugMode, timeoutMs: 120000 });
 
 const launchOptions = resolveLaunchOptions();
+let webhookRuntime: WebhookServerRuntime | null = null;
 async function bootstrap(): Promise<void> {
   installPrettyConsoleBridge();
   printPrettyBanner();
@@ -256,6 +265,9 @@ async function bootstrap(): Promise<void> {
     },
     `${String(commandCount)} loaded`,
   );
+  await runBootStep("bot menu", "sync telegram slash commands", async () => {
+    await syncBotSlashCommands();
+  });
   await runBootStep("transport", launchOptions.transport, () => undefined);
   if (prettyMode) console.log("");
   if (!prettyMode) {
@@ -282,23 +294,28 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  const launchPromise = bot.launch(launchOptions);
-  if (ttyPretty) {
-    await sleep(280);
-    rewriteBootLine(readyLine);
-    process.stdout.write("\n");
-  }
-
-  launchPromise.catch((err: unknown) => {
+  try {
+    if (launchOptions.transport === "webhook") {
+      webhookRuntime = await startFastifyWebhookServer(bot, launchOptions.webhook);
+    } else {
+      await bot.launch(launchOptions);
+    }
+  } catch (err: unknown) {
     if (prettyMode) {
       console.log(failedLine);
     }
     logger.error("bot.startup_error", { error: err });
     process.exit(1);
-  });
+  }
+
+  if (ttyPretty) {
+    await sleep(280);
+    rewriteBootLine(readyLine);
+    process.stdout.write("\n");
+  }
 }
 
-const shutdown = (signal: string) => {
+const shutdown = async (signal: string) => {
   const summary = commandMetrics.snapshot();
   logger.info("bot.shutdown", {
     signal,
@@ -312,10 +329,17 @@ const shutdown = (signal: string) => {
     })),
   });
   bot.stop();
+  if (webhookRuntime) {
+    await webhookRuntime.close().catch((err: unknown) => {
+      logger.warn("telegram.webhook_close_failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
   conversations.destroy();
   process.exit(0);
 };
-(["SIGINT", "SIGTERM"] as const).forEach((sig) => process.on(sig, () => shutdown(sig)));
+(["SIGINT", "SIGTERM"] as const).forEach((sig) => process.on(sig, () => void shutdown(sig)));
 
 void bootstrap().catch((err: unknown) => {
   logger.error("bot.bootstrap_error", { error: err });

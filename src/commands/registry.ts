@@ -1,5 +1,6 @@
 import type { BaseContext } from "@mra1k3r0/gramora";
 import { config } from "../config.js";
+import { sendRichText } from "../services/telegram/rich.js";
 import type { CommandDef } from "./types.js";
 
 export class CommandRegistry {
@@ -46,7 +47,10 @@ export class CommandRegistry {
     const requiredPerm = this.requiredPerm(cmd);
     const currentPerm = this.userPermLevel(gram);
     if (currentPerm < requiredPerm) {
-      await gram.send(`🔒 You need permission level ${String(requiredPerm)} to use /${name}.`);
+      await sendRichText(
+        gram,
+        `🔒 You need permission level ${String(requiredPerm)} to use /${name}.`,
+      );
       return true;
     }
 
@@ -57,7 +61,10 @@ export class CommandRegistry {
       const readyAt = this.cooldownByUserAndCommand.get(key) ?? 0;
       if (readyAt > now) {
         const remainingSec = Math.ceil((readyAt - now) / 1000);
-        await gram.send(`⏳ /${name} is on cooldown. Try again in ${String(remainingSec)}s.`);
+        await sendRichText(
+          gram,
+          `⏳ /${name} is on cooldown. Try again in ${String(remainingSec)}s.`,
+        );
         return true;
       }
       this.cooldownByUserAndCommand.set(key, now + cooldownSeconds * 1000);

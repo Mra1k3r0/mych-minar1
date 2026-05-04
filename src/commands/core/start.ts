@@ -1,5 +1,6 @@
 import { Keyboard } from "@mra1k3r0/gramora";
 import { config } from "../../config.js";
+import { sendRichText } from "../../services/telegram/rich.js";
 import { commandRegistry } from "../registry.js";
 
 export const CMD_START = commandRegistry.register({
@@ -32,6 +33,6 @@ export const CMD_START = commandRegistry.register({
     if (isAdmin) lines.push("• /status — budgets / readiness");
     lines.push("• /help — all commands");
 
-    await gram.send(lines.join("\n"), kb.build());
+    await sendRichText(gram, lines.join("\n"), kb.build());
   },
 });

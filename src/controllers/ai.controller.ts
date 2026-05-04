@@ -716,10 +716,10 @@ export class AiController {
     const topRatio = top / totalTokens;
     const uniqueRatio = freq.size / totalTokens;
 
-    // optimization: use loop instead of Array.from to count non-ascii characters
+    // optimization: use for...of to correctly count unicode code points
     let nonAscii = 0;
-    for (let i = 0; i < t.length; i++) {
-      if (t.charCodeAt(i) > 127) nonAscii++;
+    for (const ch of t) {
+      if ((ch.codePointAt(0) ?? 0) > 127) nonAscii++;
     }
 
     const nonAsciiRatio = nonAscii / t.length;

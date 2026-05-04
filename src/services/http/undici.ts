@@ -8,6 +8,13 @@ export type HttpRequestOptions = {
   body?: string;
   timeoutMs?: number;
   mode?: "safe" | "strict";
+  allowNon2xx?: boolean;
+};
+
+export type HttpRes<T> = {
+  ok: boolean;
+  status: number;
+  data: T | null;
 };
 
 export class HttpRequestError extends Error {
@@ -51,7 +58,7 @@ async function executeRequest(url: string, options: HttpRequestOptions = {}) {
 
 async function fetchJsonStrict<T>(url: string, options: HttpRequestOptions = {}): Promise<T> {
   const response = await executeRequest(url, options);
-  if (!response.ok) {
+  if (!response.ok && !options.allowNon2xx) {
     throw new HttpRequestError("Non-2xx HTTP response", {
       url,
       status: response.status,
@@ -66,6 +73,33 @@ async function fetchJsonStrict<T>(url: string, options: HttpRequestOptions = {})
       status: response.status,
       causeCode: "invalid_json",
     });
+  }
+}
+
+export async function FetchM<T>(
+  url: string,
+  options: HttpRequestOptions = {},
+): Promise<HttpRes<T>> {
+  const response = await executeRequest(url, options);
+  if (!response.ok && !options.allowNon2xx) {
+    throw new HttpRequestError("Non-2xx HTTP response", {
+      url,
+      status: response.status,
+      causeCode: "http",
+    });
+  }
+  try {
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: (await response.json()) as T,
+    };
+  } catch {
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: null,
+    };
   }
 }
 

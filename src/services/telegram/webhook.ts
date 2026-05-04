@@ -43,6 +43,8 @@ type TelegramWebhookInfo = {
 
 const WEBHOOK_MAX_BODY_BYTES = 1_048_576;
 const WEBHOOK_HEALTH_INTERVAL_MS = 45_000;
+const WEBHOOK_KEEPALIVE_TIMEOUT_MS = 8_000;
+const WEBHOOK_FAILURES_BEFORE_ROTATE = 3;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -246,49 +248,89 @@ export async function startFastifyWebhookServer(
 
   let telegramWebhookRegistered = false;
   let webhookHealthTimer: NodeJS.Timeout | undefined;
+  let healthCheckRunning = false;
+  let consecutiveHealthFailures = 0;
 
   if (publicHttpsOrigin) {
-    const absoluteUrl = webhookAbsoluteUrl(publicHttpsOrigin, adapter.path);
-    try {
+    let absoluteUrl = webhookAbsoluteUrl(publicHttpsOrigin, adapter.path);
+    const registerCurrentWebhook = async (attempts: number) => {
       await registerTelegramWebhookWithRetries(
         {
           token: config.telegram.token,
           url: absoluteUrl,
           secretToken: runtime.secretToken,
         },
-        usedTunnel ? 3 : 1,
+        attempts,
       );
+    };
+
+    const rotateTunnelAndRebind = async (reason: string) => {
+      if (!usedTunnel) return;
+      try {
+        await tunnel?.close();
+      } catch (closeErr) {
+        logger.warn("telegram.webhook_tunnel_close_failed", {
+          error: closeErr instanceof Error ? closeErr.message : String(closeErr),
+        });
+      }
+
+      tunnel = await startManagedTunnel(runtime);
+      const rawTunnelUrl = await tunnel.getURL();
+      publicHttpsOrigin = normalizePublicWebhookOrigin(rawTunnelUrl);
+      absoluteUrl = webhookAbsoluteUrl(publicHttpsOrigin, adapter.path);
+      await registerCurrentWebhook(3);
+
+      logger.warn("telegram.webhook_tunnel_rotated", {
+        reason,
+        provider: tunnel.provider,
+        domain: publicHttpsOrigin,
+        webhookUrl: absoluteUrl,
+      });
+    };
+
+    try {
+      await registerCurrentWebhook(usedTunnel ? 3 : 1);
       telegramWebhookRegistered = true;
       const startWebhookHealthMonitor = () => {
         webhookHealthTimer = setInterval(() => {
           void (async () => {
+            if (healthCheckRunning) return;
+            healthCheckRunning = true;
             try {
               const info = await fetchTelegramWebhookInfo(config.telegram.token);
               const currentUrl = typeof info.result?.url === "string" ? info.result.url : "";
               const pending = info.result?.pending_update_count ?? 0;
               const lastErr = info.result?.last_error_message;
               const mismatch = currentUrl !== absoluteUrl;
+              let healthProbeOk = true;
+              if (publicHttpsOrigin) {
+                const healthUrl = webhookAbsoluteUrl(publicHttpsOrigin, "/healthz");
+                try {
+                  await Fetch<{ ok?: boolean }>(healthUrl, {
+                    method: "GET",
+                    headers: { accept: "application/json" },
+                    mode: "strict",
+                    timeoutMs: WEBHOOK_KEEPALIVE_TIMEOUT_MS,
+                  });
+                } catch {
+                  healthProbeOk = false;
+                }
+              }
 
-              if (mismatch || typeof lastErr === "string" || pending > 20) {
+              if (mismatch || typeof lastErr === "string" || pending > 20 || !healthProbeOk) {
                 logger.warn("telegram.webhook_health", {
                   expectedUrl: absoluteUrl,
                   registeredUrl: currentUrl || null,
                   pendingUpdateCount: pending,
                   lastErrorMessage: lastErr ?? null,
                   mismatch,
+                  healthProbeOk,
                 });
               }
 
               if (mismatch) {
                 try {
-                  await registerTelegramWebhookWithRetries(
-                    {
-                      token: config.telegram.token,
-                      url: absoluteUrl,
-                      secretToken: runtime.secretToken,
-                    },
-                    2,
-                  );
+                  await registerCurrentWebhook(2);
                   logger.info("telegram.webhook_repaired", {
                     webhookUrl: absoluteUrl,
                   });
@@ -299,10 +341,36 @@ export async function startFastifyWebhookServer(
                   });
                 }
               }
+
+              const unhealthy = !healthProbeOk || mismatch || typeof lastErr === "string";
+              if (unhealthy) {
+                consecutiveHealthFailures++;
+                if (consecutiveHealthFailures >= WEBHOOK_FAILURES_BEFORE_ROTATE) {
+                  await rotateTunnelAndRebind(
+                    `consecutive unhealthy checks: ${String(consecutiveHealthFailures)}`,
+                  );
+                  consecutiveHealthFailures = 0;
+                }
+              } else {
+                consecutiveHealthFailures = 0;
+              }
             } catch (healthErr) {
               logger.warn("telegram.webhook_health_failed", {
                 error: healthErr instanceof Error ? healthErr.message : String(healthErr),
               });
+              consecutiveHealthFailures++;
+              if (consecutiveHealthFailures >= WEBHOOK_FAILURES_BEFORE_ROTATE) {
+                try {
+                  await rotateTunnelAndRebind("health monitor exception");
+                  consecutiveHealthFailures = 0;
+                } catch (rotateErr) {
+                  logger.warn("telegram.webhook_rotate_failed", {
+                    error: rotateErr instanceof Error ? rotateErr.message : String(rotateErr),
+                  });
+                }
+              }
+            } finally {
+              healthCheckRunning = false;
             }
           })();
         }, WEBHOOK_HEALTH_INTERVAL_MS);

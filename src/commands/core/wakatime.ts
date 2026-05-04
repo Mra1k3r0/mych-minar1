@@ -1,5 +1,5 @@
 import { commandRegistry } from "../registry.js";
-import { Fetch } from "../../services/http/undici.js";
+import { FetchM } from "../../services/http/undici.js";
 import { sendRichText } from "../../services/telegram/rich.js";
 
 type WakaLanguage = {
@@ -21,8 +21,9 @@ type WakaStatsData = {
   projects?: WakaProject[];
 };
 
-type WakaStatsResponse = {
+type WakaRes = {
   data?: WakaStatsData;
+  error?: string;
 };
 
 type WakaRange = "last_7_days" | "last_30_days" | "last_6_months" | "last_year" | "all_time";
@@ -35,7 +36,7 @@ const VALID_RANGES = new Set<WakaRange>([
   "all_time",
 ]);
 
-const RANGE_LIST: readonly WakaRange[] = [
+const RANGES: readonly WakaRange[] = [
   "last_7_days",
   "last_30_days",
   "last_6_months",
@@ -49,6 +50,12 @@ function escapeHtml(text: string): string {
 
 function rangeCode(range: string): string {
   return `<code>${escapeHtml(range).replace(/_/g, "&#95;")}</code>`;
+}
+
+function msgField(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const maybe = (value as Record<string, unknown>).message;
+  return typeof maybe === "string" ? maybe : undefined;
 }
 
 function parseArgs(
@@ -105,6 +112,59 @@ function topList(
   return lines;
 }
 
+async function fetchStats(
+  username: string,
+  range: WakaRange,
+): Promise<
+  | { ok: true; data: WakaStatsData }
+  | {
+      ok: false;
+      reason: "api_error" | "not_found" | "request_failed";
+      message: string;
+    }
+> {
+  const url = `https://wakatime.com/api/v1/users/${encodeURIComponent(username)}/stats/${range}`;
+  try {
+    const resp = await FetchM<WakaRes>(url, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      allowNon2xx: true,
+    });
+    const parsed = resp.data ?? undefined;
+
+    if (resp.ok && parsed?.data) {
+      return { ok: true, data: parsed.data };
+    }
+
+    const parsedMessage = msgField(parsed);
+    const apiError = typeof parsed?.error === "string" ? parsed.error : (parsedMessage ?? "");
+
+    if (apiError) {
+      return { ok: false, reason: "api_error", message: apiError };
+    }
+
+    if (resp.status === 404) {
+      return {
+        ok: false,
+        reason: "not_found",
+        message: "No public WakaTime stats found for this user.",
+      };
+    }
+
+    return {
+      ok: false,
+      reason: "request_failed",
+      message: `WakaTime request failed (HTTP ${String(resp.status)}).`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "request_failed",
+      message: err instanceof Error ? err.message : "network error",
+    };
+  }
+}
+
 export const CMD_WAKATIME = commandRegistry.register({
   name: "wakatime",
   description: "WakaTime public stats: /wakatime <username> [range]",
@@ -129,7 +189,7 @@ export const CMD_WAKATIME = commandRegistry.register({
 
     const parsed = parseArgs(gram.text ?? "");
     if ("error" in parsed) {
-      const usageRanges = RANGE_LIST.map((x) => rangeCode(x)).join(" | ");
+      const usageRanges = RANGES.map((x) => rangeCode(x)).join(" | ");
       if (parsed.error === "missing_username") {
         await sendHtml(
           `usage: /wakatime &lt;username&gt; [${usageRanges}]`,
@@ -153,17 +213,33 @@ export const CMD_WAKATIME = commandRegistry.register({
     }
 
     const { username, range } = parsed;
-    const url = `https://wakatime.com/api/v1/users/${encodeURIComponent(username)}/stats/${range}`;
-    const response = await Fetch<WakaStatsResponse>(url);
-    const stats = response?.data;
-
-    if (!stats) {
+    const response = await fetchStats(username, range);
+    if (!response.ok) {
+      const usageRanges = RANGES.map((x) => rangeCode(x)).join(" | ");
+      if (
+        response.reason === "api_error" &&
+        response.message.toLowerCase().includes("time range")
+      ) {
+        await sendHtml(
+          [
+            `WakaTime error: ${escapeHtml(response.message)}`,
+            `try one of: ${usageRanges}`,
+            `current request: <code>${escapeHtml(username)}</code> ${rangeCode(range)}`,
+          ].join("\n"),
+          [
+            `WakaTime error: ${response.message}`,
+            "try one of: last_7_days | last_30_days | last_6_months | last_year | all_time",
+          ].join("\n"),
+        );
+        return;
+      }
       await sendRichText(
         gram,
-        `No public WakaTime stats found for "${username}".\nProfile may be private or username is invalid.`,
+        `WakaTime request failed for "${username}": ${response.message}\nProfile may be private, username invalid, or selected range unavailable.`,
       );
       return;
     }
+    const stats = response.data;
 
     const lines = [
       `<b>⌚ WakaTime: ${escapeHtml(username)}</b>`,

@@ -1709,6 +1709,6 @@ export class AiController {
       return;
     }
     console.error("[AI Error]", err);
-    await sendRichText(gram, "❌ AI is currently unavailable. Please try again later.");
+    await gram.send("❌ AI is currently unavailable. Try again in a moment.");
   }
 }

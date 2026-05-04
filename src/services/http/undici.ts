@@ -16,7 +16,8 @@ export class HttpRequestError extends Error {
   readonly causeCode?: string;
 
   constructor(message: string, params: { url: string; status?: number; causeCode?: string }) {
-    super(message);
+    const fullMessage = `${message} [${params.url}${params.status ? ` - ${String(params.status)}` : ""}]`;
+    super(fullMessage);
     this.name = "HttpRequestError";
     this.url = params.url;
     this.status = params.status;

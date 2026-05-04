@@ -1,5 +1,6 @@
 import { config } from "../../config.js";
 import { conversations, llm } from "../../container.js";
+import { sendRichText } from "../../services/telegram/rich.js";
 import { formatDuration, formatNumber } from "../../utils/format.js";
 import { commandRegistry } from "../registry.js";
 
@@ -17,16 +18,17 @@ export const CMD_STATUS = commandRegistry.register({
     const tokenPct = Math.round((rl.dailyTokens.used / rl.dailyTokens.max) * 100);
     const reqPct = Math.round((rl.dailyRequests.used / rl.dailyRequests.max) * 100);
 
-    await gram.send(
+    await sendRichText(
+      gram,
       [
-        `${healthEmoji} *Bot Status*`,
+        `${healthEmoji} **Bot Status**`,
         "",
         `⏱ Uptime: ${formatDuration(stats.uptimeMs)}`,
         `🤖 Provider: \`${config.llm.provider}\``,
         `🤖 Model: \`${config.llm.model}\``,
         `💬 Active chats: ${String(conversations.activeCount())}`,
         "",
-        "*Daily budget*",
+        "**Daily budget**",
         `├ Requests: ${String(rl.dailyRequests.used)}/${String(rl.dailyRequests.max)} (${String(reqPct)}%)`,
         `└ Tokens: ${formatNumber(rl.dailyTokens.used)}/${formatNumber(rl.dailyTokens.max)} (${String(tokenPct)}%)`,
         "",

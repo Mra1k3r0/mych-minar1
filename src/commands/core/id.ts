@@ -1,3 +1,4 @@
+import { sendRichText } from "../../services/telegram/rich.js";
 import { commandRegistry } from "../registry.js";
 
 export const CMD_ID = commandRegistry.register({
@@ -6,9 +7,10 @@ export const CMD_ID = commandRegistry.register({
   group: "core",
   cooldownSeconds: 2,
   run: async (gram) => {
-    await gram.send(
+    await sendRichText(
+      gram,
       [
-        "🆔 *Your info*",
+        "🆔 **Your info**",
         `Chat ID: \`${String(gram.chatId ?? "n/a")}\``,
         `User ID: \`${String(gram.fromId ?? "n/a")}\``,
         `Name: ${gram.message?.from?.first_name ?? "unknown"}`,

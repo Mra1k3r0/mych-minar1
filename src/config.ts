@@ -65,8 +65,47 @@ function envOptional(key: string): string | undefined {
   return v && v.trim().length > 0 ? v : undefined;
 }
 
+function parseTelegramTransport(raw: string | undefined): "polling" | "webhook" | undefined {
+  if (!raw?.trim()) return undefined;
+  const t = raw.trim().toLowerCase();
+  return t === "polling" || t === "webhook" ? t : undefined;
+}
+
 export type LlmProvider = "openai_compatible" | "anthropic";
 export type LowTokenMode = "auto" | "always" | "off";
+export type TelegramTransport = "polling" | "webhook";
+
+/** Merged telegram transport (bot.config.jsonc defaults; .env overrides when set). */
+export type TelegramWebhookRuntime = {
+  port: number;
+  host?: string;
+  path?: string;
+  domain?: string;
+  secretToken?: string;
+  tunnel?: boolean;
+  tunnelProvider?: "localtunnel" | "untun";
+};
+
+function parseBoolean(raw: string | undefined): boolean | undefined {
+  if (!raw) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === "true" || v === "1" || v === "yes" || v === "on") return true;
+  if (v === "false" || v === "0" || v === "no" || v === "off") return false;
+  return undefined;
+}
+
+function getBoolean(obj: unknown, key: string): boolean | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  const v = (obj as Record<string, unknown>)[key];
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function parseTunnelProvider(raw: string | undefined): "localtunnel" | "untun" | undefined {
+  if (!raw) return undefined;
+  const v = raw.trim().toLowerCase();
+  if (v === "localtunnel" || v === "untun") return v;
+  return undefined;
+}
 
 const llmFromFile = getObject(fileConfig, "llm");
 const botFromFile = getObject(fileConfig, "bot");
@@ -125,6 +164,56 @@ const effectiveSystemPrompt = buildEffectiveSystemPrompt({
   appendPrompt: systemPromptAppend,
 });
 
+const telegramTransport: TelegramTransport =
+  parseTelegramTransport(envOptional("BOT_TRANSPORT")) ??
+  parseTelegramTransport(getString(botFromFile, "transport")) ??
+  "polling";
+
+const webhookFromFile = botFromFile ? getObject(botFromFile, "webhook") : undefined;
+
+function webhookMerged(): TelegramWebhookRuntime | undefined {
+  if (telegramTransport !== "webhook") return undefined;
+  const filePort = getNumber(webhookFromFile ?? undefined, "port");
+  const fileHost = getString(webhookFromFile ?? undefined, "host");
+  const filePath = getString(webhookFromFile ?? undefined, "path");
+  const fileDomain = getString(webhookFromFile ?? undefined, "domain");
+  const fileSecret = getString(webhookFromFile ?? undefined, "secret");
+
+  const portRaw = envOptional("WEBHOOK_PORT");
+  const parsedPort =
+    portRaw !== undefined ? Number.parseInt(portRaw, 10) : (filePort ?? Number.NaN);
+  const port = Number.isFinite(parsedPort) ? parsedPort : 3000;
+
+  const host =
+    envOptional("WEBHOOK_HOST")?.trim() || (fileHost?.trim() ? fileHost.trim() : undefined);
+
+  const pathVal =
+    envOptional("WEBHOOK_PATH")?.trim() ?? (filePath?.trim() ? filePath.trim() : undefined);
+
+  const domain =
+    envOptional("WEBHOOK_DOMAIN")?.trim() ?? (fileDomain?.trim() ? fileDomain.trim() : undefined);
+
+  const secretToken =
+    envOptional("WEBHOOK_SECRET")?.trim() ?? (fileSecret?.trim() ? fileSecret.trim() : undefined);
+
+  const tunnel =
+    parseBoolean(process.env.WEBHOOK_TUNNEL) ?? getBoolean(webhookFromFile ?? undefined, "tunnel");
+  const tunnelProvider =
+    parseTunnelProvider(process.env.WEBHOOK_TUNNEL_PROVIDER) ??
+    parseTunnelProvider(getString(webhookFromFile ?? undefined, "tunnelProvider")) ??
+    "localtunnel";
+
+  return {
+    port,
+    ...(host !== undefined ? { host } : {}),
+    ...(pathVal !== undefined ? { path: pathVal } : {}),
+    ...(domain !== undefined ? { domain } : {}),
+    ...(secretToken !== undefined ? { secretToken } : {}),
+    ...(tunnel !== undefined ? { tunnel } : {}),
+    tunnelProvider,
+  };
+}
+
 export const config = {
   telegram: {
     token: required("TELEGRAM_BOT_TOKEN"),
@@ -157,5 +246,9 @@ export const config = {
     telegramUserRpmLimit: getNumber(botFromFile, "telegramUserRpmLimit") ?? 15,
     lowTokenMode: getLowTokenMode(botFromFile, "lowTokenMode") ?? "auto",
     systemPrompt: effectiveSystemPrompt,
+    /** Polling vs webhook; set in bot.config.jsonc `transport` or `BOT_TRANSPORT`. */
+    transport: telegramTransport,
+    /** Listen + Telegram setWebhook hints; merged from `bot.webhook` in JSONC and WEBHOOK_* env. Env wins when set. */
+    webhook: webhookMerged(),
   },
 } as const;

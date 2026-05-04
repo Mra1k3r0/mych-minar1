@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Command,
-  CallbackQuery,
-  On,
-  Keyboard,
-  renderTelegramRichText,
-} from "@mra1k3r0/gramora";
+import { Controller, Command, CallbackQuery, On, Keyboard } from "@mra1k3r0/gramora";
 import type { BaseContext } from "@mra1k3r0/gramora";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,7 +10,9 @@ import { commandRegistry } from "../commands/index.js";
 import type { ChatMessage } from "../services/llm.js";
 import { RateLimitError } from "../services/llm.js";
 import { codeBlock } from "../utils/format.js";
+import { renderTelegramRichText } from "@mra1k3r0/gramora";
 import { guardMathExpression } from "../utils/security.js";
+import { sendRichText } from "../services/telegram/rich.js";
 import { buildTelegramContext } from "../services/telegram-context.js";
 import { Parser } from "expr-eval";
 import { FunController } from "./fun.controller.js";
@@ -732,7 +727,10 @@ export class AiController {
         await this.sendAi(gram, cleaned.slice(0, 3800), rawMode);
         return;
       }
-      await gram.send("I didn’t parse that cleanly 😵‍💫. Can you rephrase in one short line?");
+      await sendRichText(
+        gram,
+        "I didn’t parse that cleanly 😵‍💫. Can you rephrase in one short line?",
+      );
       return;
     }
     await this.sendAi(gram, text, rawMode);
@@ -783,7 +781,7 @@ export class AiController {
           });
         }
       } else {
-        await gram.send(chunk);
+        await sendRichText(gram, chunk);
       }
     }
   }
@@ -1121,7 +1119,7 @@ export class AiController {
       if (!parsed.send) return;
       const t = (parsed.text ?? "").trim();
       if (t.length < 2) return;
-      await gram.send(t.slice(0, 60));
+      await sendRichText(gram, t.slice(0, 60));
     } catch {
       // Preface is just extra flavor; skip on failure.
     }
@@ -1398,7 +1396,7 @@ export class AiController {
           intent.command === "play"
             ? "Got you. What music vibe do you want? (artist/genre/mood, e.g. 'lofi chill' or 'The Weeknd')"
             : "Sure. What video should I search? (artist/title/topic, e.g. 'Clairo Pretty Girl official video')";
-        await gram.send(prompt);
+        await sendRichText(gram, prompt);
         return true;
       }
     }
@@ -1408,7 +1406,7 @@ export class AiController {
       const userId = gram.fromId;
       if (userId)
         this.pendingIntent.set(userId, { command: intent.command, baseArgs: intent.args });
-      await gram.send(clarify.prompt);
+      await sendRichText(gram, clarify.prompt);
       return true;
     }
 
@@ -1421,7 +1419,8 @@ export class AiController {
 
     const executed = await this.executeKnownCommand(gram, intent.command, intent.args);
     if (!executed && commandRegistry.get(intent.command)) {
-      await gram.send(
+      await sendRichText(
+        gram,
         `I know /${intent.command} exists but it's not wired for AI auto-run yet. I'll add it next.`,
       );
     }
@@ -1445,7 +1444,7 @@ export class AiController {
   private async runAskCommand(gram: BaseContext) {
     const question = (gram.text ?? "").split(/\s+/).slice(1).join(" ").trim();
     if (!question) {
-      await gram.send("Usage: /ask `<your question>`");
+      await sendRichText(gram, "Usage: /ask `<your question>`");
       return;
     }
 
@@ -1475,7 +1474,8 @@ export class AiController {
     const userId = gram.fromId;
     if (!userId) return;
     conversations.setMode(userId, "chat");
-    await gram.send(
+    await sendRichText(
+      gram,
       "💬 *Chat mode active*",
       Keyboard.inline().text("🗑 Clear", "ai:clear").text("🤖 Agent", "mode:agent").build(),
     );
@@ -1485,7 +1485,8 @@ export class AiController {
     const userId = gram.fromId;
     if (!userId) return;
     conversations.setMode(userId, "agent");
-    await gram.send(
+    await sendRichText(
+      gram,
       "🤖 *Agent mode active* (tools enabled)",
       Keyboard.inline().text("🗑 Clear", "ai:clear").text("💬 Chat", "mode:chat").build(),
     );
@@ -1495,7 +1496,7 @@ export class AiController {
     const userId = gram.fromId;
     if (!userId) return;
     conversations.clear(userId);
-    await gram.send("🗑 Cleared.");
+    await sendRichText(gram, "🗑 Cleared.");
   }
 
   @Command("ask")
@@ -1526,7 +1527,7 @@ export class AiController {
     await gram.answer();
     if (mode === "chat") conversations.setMode(userId, "chat");
     if (mode === "agent") conversations.setMode(userId, "agent");
-    await gram.send(mode === "agent" ? "🤖 Agent mode." : "💬 Chat mode.");
+    await sendRichText(gram, mode === "agent" ? "🤖 Agent mode." : "💬 Chat mode.");
   }
 
   @CallbackQuery("ai:*")
@@ -1537,7 +1538,7 @@ export class AiController {
     if (action === "clear") {
       conversations.clear(userId);
       await gram.answer("Cleared");
-      await gram.send("🗑 Cleared.");
+      await sendRichText(gram, "🗑 Cleared.");
     }
   }
 
@@ -1553,7 +1554,10 @@ export class AiController {
       const aliasTarget = resolveAliasTarget(cmdName);
       if (aliasTarget) {
         if (!commandRegistry.get(aliasTarget)) {
-          await gram.send(`"${cmdName}" alias is mapped but "/${aliasTarget}" is not loaded.`);
+          await sendRichText(
+            gram,
+            `"${cmdName}" alias is mapped but "/${aliasTarget}" is not loaded.`,
+          );
           return;
         }
         const args = text.split(/\s+/).slice(1).join(" ").trim();
@@ -1570,16 +1574,16 @@ export class AiController {
       }
       const suggestion = findClosestCommandName(cmdName, commandRegistry.all());
       if (suggestion) {
-        await gram.send(`"${cmdName}" isnt available. you mean "/${suggestion}"?`);
+        await sendRichText(gram, `"${cmdName}" isnt available. you mean "/${suggestion}"?`);
         return;
       }
-      await gram.send(`"${cmdName}" isnt available.`);
+      await sendRichText(gram, `"${cmdName}" isnt available.`);
       return;
     }
 
     const fast = this.fastPath(gram, text);
     if (fast) {
-      await gram.send(fast);
+      await sendRichText(gram, fast);
       return;
     }
 
@@ -1625,7 +1629,7 @@ export class AiController {
         if (ok) return;
       } else {
         if (!pendingDecision.args && (pending.command === "play" || pending.command === "video")) {
-          await gram.send("I still need a search term (artist/title/genre) to continue.");
+          await sendRichText(gram, "I still need a search term (artist/title/genre) to continue.");
           return;
         }
         const ok = await this.executeKnownCommand(gram, pending.command, pendingDecision.args);
@@ -1701,11 +1705,10 @@ export class AiController {
   private async handleAiError(gram: BaseContext, err: unknown) {
     if (err instanceof RateLimitError) {
       const waitSec = Math.ceil(err.retryAfterMs / 1000);
-      await gram.send(`⏳ Rate limited. Try again in ~${String(waitSec)}s.`);
+      await sendRichText(gram, `⏳ Rate limited. Try again in ~${String(waitSec)}s.`);
       return;
     }
     console.error("[AI Error]", err);
-    // use generic message to prevent internal logic leaks
     await gram.send("❌ AI is currently unavailable. Try again in a moment.");
   }
 }

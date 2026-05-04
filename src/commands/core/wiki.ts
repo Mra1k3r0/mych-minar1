@@ -1,5 +1,6 @@
 import { commandRegistry } from "../registry.js";
 import { Fetch } from "../../services/http/undici.js";
+import { sendRichText } from "../../services/telegram/rich.js";
 
 type WikiSearchResponse = {
   query?: {
@@ -26,7 +27,7 @@ export const CMD_WIKI = commandRegistry.register({
   run: async (gram) => {
     const query = (gram.text ?? "").split(/\s+/).slice(1).join(" ").trim();
     if (!query) {
-      await gram.send("usage: /wiki <query>");
+      await sendRichText(gram, "usage: /wiki <query>");
       return;
     }
     const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&utf8=1&format=json&srlimit=1`;
@@ -35,9 +36,9 @@ export const CMD_WIKI = commandRegistry.register({
     if (hit?.title) {
       const summary = hit.snippet ? stripHtml(hit.snippet) : "No summary available.";
       const pageUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(hit.title.replace(/\s+/g, "_"))}`;
-      await gram.send([`📚 *${hit.title}*`, summary, pageUrl].join("\n\n"));
+      await sendRichText(gram, [`📚 *${hit.title}*`, summary, pageUrl].join("\n\n"));
       return;
     }
-    await gram.send(`No Wikipedia result for "${query}".`);
+    await sendRichText(gram, `No Wikipedia result for "${query}".`);
   },
 });

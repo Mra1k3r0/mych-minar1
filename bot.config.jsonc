@@ -36,6 +36,21 @@
   },
 
   "bot": {
+    // Telegram transport: polling (default) or webhook. Same as env BOT_TRANSPORT.
+    "transport": "webhook",
+
+    // Webhook listen URL + Telegram setWebhook target. Env WEBHOOK_* overrides these when set.
+    // Prefer keeping "secret" in .env as WEBHOOK_SECRET for production.
+    "webhook": {
+      "port": 3000,
+      "host": "0.0.0.0",
+      "path": "/webhook",
+      //   "domain": "https://your-public-host.example.com",
+      "tunnel": true, // local-dev shortcut when no domain is set
+      "tunnelProvider": "localtunnel" // or "untun"
+      //"secret": ""
+    },
+
     // Conversation memory size per user
     "maxConversationHistory": 20,
     // Agent tool-calling iterations
@@ -58,4 +73,3 @@
     "telegramUserRpmLimit": 15
   }
 }
-

@@ -1,3 +1,4 @@
+import { sendRichText } from "../../services/telegram/rich.js";
 import { commandRegistry } from "../registry.js";
 
 type UnknownRecord = Record<string, unknown>;
@@ -27,9 +28,10 @@ export const CMD_CHATINFO = commandRegistry.register({
     const type = getString(chat?.type);
     const username = getString(chat?.username);
 
-    await gram.send(
+    await sendRichText(
+      gram,
       [
-        "💬 *Chat Info*",
+        "💬 **Chat Info**",
         `Chat ID: \`${String(chatId ?? "n/a")}\``,
         `Title: ${title ?? "private chat"}`,
         `Type: ${type ?? "unknown"}`,

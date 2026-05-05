@@ -3,8 +3,9 @@
  */
 
 const SUSPICIOUS_KEYWORDS =
-  /\b(constructor|__proto__|prototype|process|require|function|eval|return|this)\b/i;
+  /\b(constructor|__proto__|prototype|process|require|function|eval|return|this|toString|valueOf)\b/i;
 const MAX_MATH_EXPR_LENGTH = 200;
+const BLOCKED_CHARACTERS = /[[\]]/;
 
 export interface GuardResult {
   ok: boolean;
@@ -22,6 +23,10 @@ export function guardMathExpression(expression: string): GuardResult {
     return { ok: false, error: `Expression too long (max ${String(MAX_MATH_EXPR_LENGTH)} chars).` };
   }
 
+  if (BLOCKED_CHARACTERS.test(trimmed)) {
+    return { ok: false, error: "Security block: property access via brackets is not allowed." };
+  }
+
   if (SUSPICIOUS_KEYWORDS.test(trimmed)) {
     return { ok: false, error: "Security block: suspicious keywords detected." };
   }
@@ -33,7 +38,20 @@ export function guardMathExpression(expression: string): GuardResult {
  * Masks sensitive information in URLs (API keys, bot tokens).
  */
 export function sanitizeUrl(url: string): string {
-  const SENSITIVE_KEYS = ["api_key", "apikey", "key", "token", "auth", "secret"];
+  const SENSITIVE_KEYS = [
+    "api_key",
+    "apikey",
+    "key",
+    "token",
+    "auth",
+    "secret",
+    "access_token",
+    "session",
+    "sid",
+    "password",
+    "pwd",
+    "passwd",
+  ];
 
   try {
     const u = new URL(url);

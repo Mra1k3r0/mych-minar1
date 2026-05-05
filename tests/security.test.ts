@@ -27,11 +27,22 @@ void test("guardMathExpression should block suspicious keywords", () => {
     "return",
     "this",
     "fUnCtIoN",
+    "toString",
+    "valueOf",
   ];
   for (const kw of keywords) {
     const result = guardMathExpression(`1 + ${kw}`);
     assert.equal(result.ok, false, `Failed to block ${kw}`);
     assert.match(result.error ?? "", /suspicious keywords/i);
+  }
+});
+
+void test("guardMathExpression should block brackets", () => {
+  const cases = ['1["constructor"]', "2[0]", "a[b]"];
+  for (const c of cases) {
+    const result = guardMathExpression(c);
+    assert.equal(result.ok, false, `Failed to block ${c}`);
+    assert.match(result.error ?? "", /brackets/i);
   }
 });
 
@@ -44,6 +55,12 @@ void test("sanitizeUrl should mask sensitive query parameters", () => {
     "https://api.example.com/data?auth=secret123",
     "https://api.example.com/data?secret=secret123",
     "https://api.example.com/data?API_KEY=secret123",
+    "https://api.example.com/data?access_token=secret123",
+    "https://api.example.com/data?session=secret123",
+    "https://api.example.com/data?sid=secret123",
+    "https://api.example.com/data?password=secret123",
+    "https://api.example.com/data?pwd=secret123",
+    "https://api.example.com/data?passwd=secret123",
   ];
 
   for (const url of urls) {

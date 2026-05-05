@@ -72,3 +72,20 @@ void test("sanitizeUrl should preserve non-sensitive parameters", () => {
     "Should mask api_key parameter",
   );
 });
+
+void test("sanitizeUrl should handle relative or non-parseable URLs", () => {
+  const relative = "/bot123:abc/sendMessage?api_key=secret";
+  const sanitized = sanitizeUrl(relative);
+  assert.ok(sanitized.includes("/bot[redacted]/"), "Should mask bot token in relative path");
+  assert.ok(sanitized.includes("api_key=[redacted]"), "Should mask api_key in relative path");
+});
+
+void test("sanitizeUrl should use exact key matching for parameters", () => {
+  const url = "https://api.example.com/data?monkey=true&key=secret";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(sanitized.includes("monkey=true"), "Should not mask unrelated 'monkey' parameter");
+  assert.ok(
+    sanitized.includes("key=[redacted]") || sanitized.includes("key=%5Bredacted%5D"),
+    "Should mask exact 'key' parameter",
+  );
+});

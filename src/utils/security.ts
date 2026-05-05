@@ -33,25 +33,31 @@ export function guardMathExpression(expression: string): GuardResult {
  * Masks sensitive information in URLs (API keys, bot tokens).
  */
 export function sanitizeUrl(url: string): string {
+  const SENSITIVE_KEYS = ["api_key", "apikey", "key", "token", "auth", "secret"];
+
   try {
     const u = new URL(url);
 
     // Mask sensitive query params
-    const SENSITIVE_KEYS = ["api_key", "apikey", "key", "token", "auth", "secret"];
-    for (const key of u.searchParams.keys()) {
-      if (SENSITIVE_KEYS.some((s) => key.toLowerCase().includes(s))) {
+    for (const key of Array.from(u.searchParams.keys())) {
+      if (SENSITIVE_KEYS.includes(key.toLowerCase())) {
         u.searchParams.set(key, "[redacted]");
       }
     }
 
     // Mask Telegram bot token in path (/bot<token>/...)
-    if (u.pathname.startsWith("/bot")) {
-      u.pathname = u.pathname.replace(/^\/bot[^/]+/, "/bot[redacted]");
+    if (u.pathname.includes("/bot")) {
+      u.pathname = u.pathname.replace(/\/bot[^/]+/, "/bot[redacted]");
     }
 
     return u.toString();
   } catch {
-    // Fallback if URL parsing fails
-    return url.replace(/api_key=[^&]+/gi, "api_key=[redacted]");
+    // Fallback if URL parsing fails (e.g. relative URLs)
+    let out = url;
+    for (const key of SENSITIVE_KEYS) {
+      const regex = new RegExp(`([?&]${key}=)[^&]*`, "gi");
+      out = out.replace(regex, "$1[redacted]");
+    }
+    return out.replace(/\/bot[^/?#\s]+/, "/bot[redacted]");
   }
 }

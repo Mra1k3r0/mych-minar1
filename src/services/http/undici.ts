@@ -1,4 +1,5 @@
 import { fetch as undiciFetch } from "undici";
+import { sanitizeUrl } from "../../utils/security.js";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -23,10 +24,11 @@ export class HttpRequestError extends Error {
   readonly causeCode?: string;
 
   constructor(message: string, params: { url: string; status?: number; causeCode?: string }) {
-    const fullMessage = `${message} [${params.url}${params.status ? ` - ${String(params.status)}` : ""}]`;
+    const safeUrl = sanitizeUrl(params.url);
+    const fullMessage = `${message} [${safeUrl}${params.status ? ` - ${String(params.status)}` : ""}]`;
     super(fullMessage);
     this.name = "HttpRequestError";
-    this.url = params.url;
+    this.url = safeUrl;
     this.status = params.status;
     this.causeCode = params.causeCode;
   }

@@ -266,7 +266,7 @@ async function bootstrap(): Promise<void> {
     `${String(commandCount)} loaded`,
   );
   await runBootStep("bot menu", "sync telegram slash commands", async () => {
-    await syncBotSlashCommands();
+    await syncBotSlashCommands(bot);
   });
   await runBootStep("transport", launchOptions.transport, () => undefined);
   if (prettyMode) console.log("");

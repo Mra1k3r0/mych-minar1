@@ -1,11 +1,16 @@
-import { TelegramApiError, type Gramora, type Update } from "@mra1k3r0/gramora";
+import {
+  TelegramApiError,
+  buildWebhookUrl,
+  normalizeWebhookOrigin,
+  type Gramora,
+  type Update,
+} from "@mra1k3r0/gramora";
 import localtunnel from "localtunnel";
 import { startTunnel } from "untun";
 import Fastify from "fastify";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { Fetch, HttpRequestError } from "../http/undici.js";
+import { Fetch } from "../http/undici.js";
 import { logger } from "../observability/logger.js";
-import { config } from "../../config.js";
 
 export type WebhookRuntimeConfig = {
   port: number;
@@ -28,23 +33,21 @@ type ManagedTunnel = {
 };
 
 type TelegramWebhookInfo = {
-  ok?: boolean;
-  result?: {
-    url?: string;
-    has_custom_certificate?: boolean;
-    pending_update_count?: number;
-    last_error_date?: number;
-    last_error_message?: string;
-    max_connections?: number;
-    ip_address?: string;
-  };
-  description?: string;
+  url?: string;
+  has_custom_certificate?: boolean;
+  pending_update_count?: number;
+  last_error_date?: number;
+  last_error_message?: string;
+  max_connections?: number;
+  ip_address?: string;
 };
 
 const WEBHOOK_MAX_BODY_BYTES = 1_048_576;
 const WEBHOOK_HEALTH_INTERVAL_MS = 45_000;
 const WEBHOOK_KEEPALIVE_TIMEOUT_MS = 8_000;
 const WEBHOOK_FAILURES_BEFORE_ROTATE = 3;
+const UNTUN_DNS_WARMUP_MS = 3_000;
+const WEBHOOK_STARTUP_ROTATE_ATTEMPTS = 3;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,91 +58,28 @@ function headerSingle(value: string | string[] | undefined): string | undefined 
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** Clean tunnel/domain text so Telegram gets a valid https origin. */
-function normalizePublicWebhookOrigin(raw: string): string {
-  let s = raw
-    .trim()
-    .replace(/^['"`<(]+/, "")
-    .trim();
-  s = s.replace(/[`"'>)]+$/, "").trim();
-  if (s.startsWith("http://")) {
-    s = `https://${s.slice("http://".length)}`;
-  }
-  const withScheme = s.startsWith("https://") ? s : `https://${s}`;
-  return withScheme.endsWith("/") ? withScheme.slice(0, -1) : withScheme;
-}
-
-function webhookAbsoluteUrl(publicOrigin: string, mountPath: string): string {
-  const base = normalizePublicWebhookOrigin(publicOrigin);
-  const p = mountPath.startsWith("/") ? mountPath : `/${mountPath}`;
-  return `${base}${p}`;
-}
-
-/** Register webhook and keep Telegram's real error description on failures. */
-async function registerTelegramWebhook(opts: {
-  token: string;
-  url: string;
-  secretToken?: string;
-}): Promise<void> {
-  const endpoint = `https://api.telegram.org/bot${opts.token}/setWebhook`;
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = await Fetch<Record<string, unknown>>(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        url: opts.url,
-        ...(opts.secretToken !== undefined ? { secret_token: opts.secretToken } : {}),
-      }),
-      mode: "strict",
-      timeoutMs: 12_000,
-    });
-  } catch (err) {
-    if (err instanceof HttpRequestError) {
-      throw new TelegramApiError(
-        `setWebhook request failed: ${err.message}`,
-        err.status ?? 500,
-        "setWebhook",
-      );
-    }
-    throw err;
-  }
-
-  if (parsed.ok !== true) {
-    const desc =
-      typeof parsed.description === "string"
-        ? parsed.description
-        : "Telegram API rejected setWebhook";
-    throw new TelegramApiError(
-      desc,
-      typeof parsed.error_code === "number" ? parsed.error_code : 400,
-      "setWebhook",
-    );
-  }
-}
-
-async function fetchTelegramWebhookInfo(token: string): Promise<TelegramWebhookInfo> {
-  const endpoint = `https://api.telegram.org/bot${token}/getWebhookInfo`;
-  const parsed = await Fetch<TelegramWebhookInfo>(endpoint, {
-    method: "GET",
-    headers: { accept: "application/json" },
-    mode: "strict",
-    timeoutMs: 12_000,
-  });
-  return parsed;
+function isWebhookDnsRaceError(err: unknown): boolean {
+  return (
+    err instanceof TelegramApiError &&
+    err.errorCode === 400 &&
+    typeof err.message === "string" &&
+    err.message.toLowerCase().includes("failed to resolve host")
+  );
 }
 
 async function registerTelegramWebhookWithRetries(
-  opts: Parameters<typeof registerTelegramWebhook>[0],
+  setWebhook: () => Promise<unknown>,
   attempts: number,
 ): Promise<void> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      await registerTelegramWebhook(opts);
+      await setWebhook();
       return;
     } catch (err) {
       if (attempt < attempts) {
-        await sleep(900 * attempt);
+        // Telegram can fail early on new trycloudflare hostnames before DNS propagates globally.
+        const retryDelay = isWebhookDnsRaceError(err) ? 2_500 * attempt : 900 * attempt;
+        await sleep(retryDelay);
         continue;
       }
       throw err;
@@ -166,7 +106,10 @@ async function startManagedTunnel(runtime: WebhookRuntimeConfig): Promise<Manage
     ["1", "true", "yes", "on"].includes(
       process.env.UNTUN_ACCEPT_CLOUDFLARE_NOTICE.trim().toLowerCase(),
     );
-  const t = await startTunnel({ port: runtime.port, acceptCloudflareNotice: untunAccept });
+  const t = await startTunnel({
+    port: runtime.port,
+    acceptCloudflareNotice: untunAccept,
+  });
   if (!t) {
     throw new Error("Failed to create webhook tunnel (untun returned undefined).");
   }
@@ -202,7 +145,7 @@ export async function startFastifyWebhookServer(
     usedTunnel = true;
     tunnel = await startManagedTunnel(runtime);
     const rawTunnelUrl = await tunnel.getURL();
-    publicHttpsOrigin = normalizePublicWebhookOrigin(rawTunnelUrl);
+    publicHttpsOrigin = normalizeWebhookOrigin(rawTunnelUrl);
     logger.info("telegram.webhook_tunnel_started", {
       provider: tunnel.provider,
       domain: publicHttpsOrigin,
@@ -210,7 +153,7 @@ export async function startFastifyWebhookServer(
       rawTunnelUrl,
     });
   } else if (publicHttpsOrigin) {
-    publicHttpsOrigin = normalizePublicWebhookOrigin(publicHttpsOrigin);
+    publicHttpsOrigin = normalizeWebhookOrigin(publicHttpsOrigin);
   }
 
   /** We call setWebhook ourselves for clearer errors. */
@@ -252,16 +195,18 @@ export async function startFastifyWebhookServer(
   let consecutiveHealthFailures = 0;
 
   if (publicHttpsOrigin) {
-    let absoluteUrl = webhookAbsoluteUrl(publicHttpsOrigin, adapter.path);
+    let absoluteUrl = buildWebhookUrl(publicHttpsOrigin, adapter.path);
     const registerCurrentWebhook = async (attempts: number) => {
-      await registerTelegramWebhookWithRetries(
-        {
-          token: config.telegram.token,
+      if (usedTunnel && tunnel?.provider === "untun") {
+        // Give quick Cloudflare tunnel DNS a brief propagation window before setWebhook.
+        await sleep(UNTUN_DNS_WARMUP_MS);
+      }
+      await registerTelegramWebhookWithRetries(() => {
+        return bot.api.setWebhook({
           url: absoluteUrl,
-          secretToken: runtime.secretToken,
-        },
-        attempts,
-      );
+          ...(runtime.secretToken !== undefined ? { secret_token: runtime.secretToken } : {}),
+        });
+      }, attempts);
     };
 
     const rotateTunnelAndRebind = async (reason: string) => {
@@ -276,8 +221,8 @@ export async function startFastifyWebhookServer(
 
       tunnel = await startManagedTunnel(runtime);
       const rawTunnelUrl = await tunnel.getURL();
-      publicHttpsOrigin = normalizePublicWebhookOrigin(rawTunnelUrl);
-      absoluteUrl = webhookAbsoluteUrl(publicHttpsOrigin, adapter.path);
+      publicHttpsOrigin = normalizeWebhookOrigin(rawTunnelUrl);
+      absoluteUrl = buildWebhookUrl(publicHttpsOrigin, adapter.path);
       await registerCurrentWebhook(3);
 
       logger.warn("telegram.webhook_tunnel_rotated", {
@@ -288,8 +233,33 @@ export async function startFastifyWebhookServer(
       });
     };
 
+    const registerWithStartupRecovery = async () => {
+      // For quick cloudflare tunnels, DNS can fail briefly on a fresh hostname.
+      // If that keeps happening, rotate to a new tunnel URL and retry.
+      for (let cycle = 1; cycle <= WEBHOOK_STARTUP_ROTATE_ATTEMPTS; cycle++) {
+        try {
+          await registerCurrentWebhook(usedTunnel ? 3 : 1);
+          return;
+        } catch (err) {
+          if (
+            !usedTunnel ||
+            !isWebhookDnsRaceError(err) ||
+            cycle >= WEBHOOK_STARTUP_ROTATE_ATTEMPTS
+          ) {
+            throw err;
+          }
+          logger.warn("telegram.webhook_startup_dns_retry", {
+            cycle,
+            error: err instanceof Error ? err.message : String(err),
+            webhookUrl: absoluteUrl,
+          });
+          await rotateTunnelAndRebind(`startup dns resolve failure (cycle ${String(cycle)})`);
+        }
+      }
+    };
+
     try {
-      await registerCurrentWebhook(usedTunnel ? 3 : 1);
+      await registerWithStartupRecovery();
       telegramWebhookRegistered = true;
       const startWebhookHealthMonitor = () => {
         webhookHealthTimer = setInterval(() => {
@@ -297,14 +267,14 @@ export async function startFastifyWebhookServer(
             if (healthCheckRunning) return;
             healthCheckRunning = true;
             try {
-              const info = await fetchTelegramWebhookInfo(config.telegram.token);
-              const currentUrl = typeof info.result?.url === "string" ? info.result.url : "";
-              const pending = info.result?.pending_update_count ?? 0;
-              const lastErr = info.result?.last_error_message;
+              const info = (await bot.api.getWebhookInfo()) as TelegramWebhookInfo;
+              const currentUrl = typeof info.url === "string" ? info.url : "";
+              const pending = info.pending_update_count ?? 0;
+              const lastErr = info.last_error_message;
               const mismatch = currentUrl !== absoluteUrl;
               let healthProbeOk = true;
               if (publicHttpsOrigin) {
-                const healthUrl = webhookAbsoluteUrl(publicHttpsOrigin, "/healthz");
+                const healthUrl = buildWebhookUrl(publicHttpsOrigin, "/healthz");
                 try {
                   await Fetch<{ ok?: boolean }>(healthUrl, {
                     method: "GET",
@@ -380,10 +350,15 @@ export async function startFastifyWebhookServer(
     } catch (err) {
       const code = err instanceof TelegramApiError ? err.errorCode : undefined;
       const method = err instanceof TelegramApiError ? err.method : undefined;
+      const httpStatus = err instanceof TelegramApiError ? err.httpStatus : undefined;
+      const responseBodySnippet =
+        err instanceof TelegramApiError ? err.responseBodySnippet : undefined;
       logger.error("telegram.webhook_set_failed", {
         error: err instanceof Error ? err.message : String(err),
         telegramErrorCode: code,
         telegramMethod: method,
+        telegramHttpStatus: httpStatus,
+        telegramResponseSnippet: responseBodySnippet,
         webhookUrl: absoluteUrl,
       });
       throw err;
@@ -404,7 +379,7 @@ export async function startFastifyWebhookServer(
     health: "/healthz",
     domain: publicHttpsOrigin ?? null,
     webhookUrl:
-      publicHttpsOrigin !== undefined ? webhookAbsoluteUrl(publicHttpsOrigin, adapter.path) : null,
+      publicHttpsOrigin !== undefined ? buildWebhookUrl(publicHttpsOrigin, adapter.path) : null,
     tunnelEnabled: Boolean(runtime.tunnel),
     tunnelActive: usedTunnel,
     telegramUrlRegistered: telegramWebhookRegistered,

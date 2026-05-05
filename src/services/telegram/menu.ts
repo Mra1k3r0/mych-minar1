@@ -1,10 +1,7 @@
-import { config } from "../../config.js";
+import type { Gramora } from "@mra1k3r0/gramora";
 import { commandRegistry } from "../../commands/registry.js";
 import type { CommandDef } from "../../commands/types.js";
-import { Fetch } from "../http/undici.js";
 import { logger } from "../observability/logger.js";
-
-const TG_API = "https://api.telegram.org";
 
 function normalizeBotCommandDescription(raw: string, fallback: string): string {
   let d = raw.trim().replace(/\s+/g, " ");
@@ -30,7 +27,7 @@ function menuCommandsFromRegistry(
 }
 
 /** Sync default slash commands to Telegram menu (`setMyCommands`). */
-export async function syncBotSlashCommands(): Promise<void> {
+export async function syncBotSlashCommands(bot: Gramora): Promise<void> {
   const defs = commandRegistry.all().filter((c) => !c.admin && (c.perm ?? 0) < 1);
   const commands = menuCommandsFromRegistry(defs);
   if (commands.length === 0) {
@@ -38,17 +35,11 @@ export async function syncBotSlashCommands(): Promise<void> {
     return;
   }
 
-  const url = `${TG_API}/bot${config.telegram.token}/setMyCommands`;
   try {
-    const data = await Fetch<{ ok?: boolean; description?: string }>(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ commands }),
-      mode: "strict",
+    await bot.api.deleteMyCommands();
+    await bot.api.setMyCommands({
+      commands,
     });
-    if (!data.ok) {
-      logger.warn("bot.set_my_commands", { ok: data.ok, description: data.description });
-    }
   } catch (err) {
     logger.warn("bot.set_my_commands_failed", {
       error: err instanceof Error ? err.message : String(err),

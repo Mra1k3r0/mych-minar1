@@ -24,6 +24,28 @@ async function getJson<T>(url: string): Promise<T | null> {
   return Fetch<T>(url);
 }
 
+function mediaExtFromUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split("/").pop() ?? "";
+    const dot = last.lastIndexOf(".");
+    if (dot < 0 || dot === last.length - 1) return null;
+    return last.slice(dot + 1).toLowerCase();
+  } catch {
+    const noQuery = url.split("?")[0] ?? url;
+    const last = noQuery.split("/").pop() ?? "";
+    const dot = last.lastIndexOf(".");
+    if (dot < 0 || dot === last.length - 1) return null;
+    return last.slice(dot + 1).toLowerCase();
+  }
+}
+
+function isAnimatedMediaUrl(url: string): boolean {
+  const ext = mediaExtFromUrl(url);
+  if (!ext) return false;
+  return ext === "gif" || ext === "mp4" || ext === "webm";
+}
+
 function getArgs(gram: BaseContext): string {
   return (gram.text ?? "").split(/\s+/).slice(1).join(" ").trim();
 }
@@ -299,6 +321,15 @@ async function sendNekoAction(gram: BaseContext, endpoint: string, fallbackCapti
   if (!result?.url) {
     await gram.send({
       text: "Neko API is sleepy rn. Try again.",
+      ...(replyTo !== undefined ? { replyTo } : {}),
+    });
+    return;
+  }
+
+  if (isAnimatedMediaUrl(result.url)) {
+    await gram.animation({
+      animation: result.url,
+      caption: fallbackCaption,
       ...(replyTo !== undefined ? { replyTo } : {}),
     });
     return;

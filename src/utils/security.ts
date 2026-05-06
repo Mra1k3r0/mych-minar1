@@ -56,10 +56,30 @@ export function sanitizeUrl(url: string): string {
   try {
     const u = new URL(url);
 
+    // Mask basic auth credentials
+    if (u.username) u.username = "[redacted]";
+    if (u.password) u.password = "[redacted]";
+
     // Mask sensitive query params
     for (const key of Array.from(u.searchParams.keys())) {
       if (SENSITIVE_KEYS.includes(key.toLowerCase())) {
         u.searchParams.set(key, "[redacted]");
+      }
+    }
+
+    // Mask sensitive keys in hash fragment
+    if (u.hash.length > 1) {
+      const fragment = u.hash.slice(1);
+      if (fragment.includes("=")) {
+        const params = new URLSearchParams(fragment);
+        let changed = false;
+        for (const key of Array.from(params.keys())) {
+          if (SENSITIVE_KEYS.includes(key.toLowerCase())) {
+            params.set(key, "[redacted]");
+            changed = true;
+          }
+        }
+        if (changed) u.hash = params.toString();
       }
     }
 
@@ -72,8 +92,12 @@ export function sanitizeUrl(url: string): string {
   } catch {
     // Fallback if URL parsing fails (e.g. relative URLs)
     let out = url;
+
+    // Mask basic auth: //user:pass@ or //user@
+    out = out.replace(/(\/\/)[^@/\s]+@/g, "$1[redacted]@");
+
     for (const key of SENSITIVE_KEYS) {
-      const regex = new RegExp(`([?&]${key}=)[^&]*`, "gi");
+      const regex = new RegExp(`([?&#]${key}=)[^&]*`, "gi");
       out = out.replace(regex, "$1[redacted]");
     }
     return out.replace(/\/bot[^/?#\s]+/, "/bot[redacted]");

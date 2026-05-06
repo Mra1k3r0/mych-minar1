@@ -706,10 +706,18 @@ export class AiController {
     const topRatio = top / totalTokens;
     const uniqueRatio = freq.size / totalTokens;
 
-    // optimization: use for loop with charCodeAt for faster non-ascii counting
+    // optimization: use for loop with surrogate detection for faster, accurate unicode counting
     let nonAscii = 0;
     for (let i = 0; i < t.length; i++) {
-      if (t.charCodeAt(i) > 127) nonAscii++;
+      const code = t.charCodeAt(i);
+      if (code > 127) {
+        nonAscii++;
+        // Skip low surrogate to count emoji/surrogate pairs as 1 logical unit
+        if (code >= 0xd800 && code <= 0xdbff && i + 1 < t.length) {
+          const next = t.charCodeAt(i + 1);
+          if (next >= 0xdc00 && next <= 0xdfff) i++;
+        }
+      }
     }
 
     const nonAsciiRatio = nonAscii / t.length;

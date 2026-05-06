@@ -42,16 +42,26 @@ const COMMAND_KEYWORD_INDEX = Object.freeze(
   Object.entries(COMMAND_INTENT_META)
     .map(([command, meta]) => {
       if (!meta) return null;
+      const tokens = [
+        ...(meta.matchCommandName ? [command] : []),
+        ...meta.aliases,
+        ...meta.keywords,
+      ];
       return {
         command,
-        tokens: Object.freeze([
-          ...(meta.matchCommandName ? [command] : []),
-          ...meta.aliases,
-          ...meta.keywords,
-        ]),
+        patterns: Object.freeze(
+          tokens
+            .filter((t) => t.trim().length > 0)
+            .map((t) => {
+              const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              return t.includes(" ")
+                ? new RegExp(`(?:^|\\b)${escaped}(?:\\b|$)`, "i")
+                : new RegExp(`\\b${escaped}\\b`, "i");
+            }),
+        ),
       };
     })
-    .filter((row): row is { command: string; tokens: readonly string[] } => row !== null),
+    .filter((row): row is { command: string; patterns: readonly RegExp[] } => row !== null),
 );
 const COMMAND_ALIAS_INDEX = Object.freeze(
   Object.entries(COMMAND_INTENT_META).reduce<Record<string, string>>((acc, [command, meta]) => {
@@ -65,22 +75,13 @@ const COMMAND_ALIAS_INDEX = Object.freeze(
     return acc;
   }, {}),
 );
+const COMMAND_LIST_QUERY_RE =
+  /(what commands|available commands|command list|list commands|help commands|show commands|feature list|features|what can you do|what can u do|what else can you do|what else u can do|what you can do|capabilities|list of commands|your commands|full command)/;
 
 function resolveAliasTarget(commandName: string): string | null {
   const key = commandName.trim().toLowerCase();
   if (!key) return null;
-  const staticHit = COMMAND_ALIAS_INDEX[key];
-  if (staticHit) return staticHit;
-  try {
-    const live = normalizeCommandIntentMap(getCommandIntentData());
-    for (const [command, meta] of Object.entries(live)) {
-      if (!commandRegistry.get(command)) continue;
-      if (meta.aliases.includes(key)) return command;
-    }
-  } catch {
-    // Ignore live resolver failure and fallback to normal unknown command flow.
-  }
-  return null;
+  return COMMAND_ALIAS_INDEX[key] ?? null;
 }
 
 function metaForCommand(command: string) {
@@ -244,11 +245,7 @@ export class AiController {
 
   private async maybeSendCreativeCommandList(gram: BaseContext, text: string): Promise<boolean> {
     const lower = this.localPromptize(text);
-    if (
-      !/(what commands|available commands|command list|list commands|help commands|show commands|feature list|features|what can you do|what can u do|what else can you do|what else u can do|what you can do|capabilities|list of commands|your commands|full command)/.test(
-        lower,
-      )
-    ) {
+    if (!COMMAND_LIST_QUERY_RE.test(lower)) {
       return false;
     }
     const preferredGroup = this.detectCommandGroupPreference(lower);
@@ -340,9 +337,7 @@ export class AiController {
 
   private isCommandListQuery(text: string): boolean {
     const lower = this.localPromptize(text);
-    return /(what commands|available commands|command list|list commands|help commands|show commands|feature list|features|what can you do|what can u do|what else can you do|what else u can do|what you can do|capabilities|list of commands|your commands|full command)/.test(
-      lower,
-    );
+    return COMMAND_LIST_QUERY_RE.test(lower);
   }
 
   private commandListCompact(): string {
@@ -711,10 +706,18 @@ export class AiController {
     const topRatio = top / totalTokens;
     const uniqueRatio = freq.size / totalTokens;
 
-    // optimization: use for...of to correctly count unicode code points
+    // optimization: use for loop with surrogate detection for faster, accurate unicode counting
     let nonAscii = 0;
-    for (const ch of t) {
-      if ((ch.codePointAt(0) ?? 0) > 127) nonAscii++;
+    for (let i = 0; i < t.length; i++) {
+      const code = t.charCodeAt(i);
+      if (code > 127) {
+        nonAscii++;
+        // Skip low surrogate to count emoji/surrogate pairs as 1 logical unit
+        if (code >= 0xd800 && code <= 0xdbff && i + 1 < t.length) {
+          const next = t.charCodeAt(i + 1);
+          if (next >= 0xdc00 && next <= 0xdfff) i++;
+        }
+      }
     }
 
     const nonAsciiRatio = nonAscii / t.length;
@@ -948,24 +951,10 @@ export class AiController {
     ].join("\n");
   }
 
-  private escapeRegex(text: string): string {
-    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  private hasKeywordMatch(text: string, token: string): boolean {
-    const normalizedToken = token.trim().toLowerCase();
-    if (!normalizedToken) return false;
-    const escaped = this.escapeRegex(normalizedToken);
-    const pattern = normalizedToken.includes(" ")
-      ? new RegExp(`(?:^|\\b)${escaped}(?:\\b|$)`, "i")
-      : new RegExp(`\\b${escaped}\\b`, "i");
-    return pattern.test(text);
-  }
-
   private findKeywordCommand(text: string): string | null {
     for (const entry of COMMAND_KEYWORD_INDEX) {
-      if (entry.tokens.some((token) => this.hasKeywordMatch(text, token))) {
-        return entry.command;
+      for (const pattern of entry.patterns) {
+        if (pattern.test(text)) return entry.command;
       }
     }
     return null;

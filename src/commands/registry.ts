@@ -6,14 +6,18 @@ import type { CommandDef } from "./types.js";
 export class CommandRegistry {
   private map = new Map<string, CommandDef>();
   private cooldownByUserAndCommand = new Map<string, number>();
+  private cachedAll: CommandDef[] | null = null;
 
   register(def: CommandDef) {
     this.map.set(def.name, def);
+    this.cachedAll = null;
     return def;
   }
 
   all(): CommandDef[] {
-    return [...this.map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    if (this.cachedAll) return this.cachedAll;
+    this.cachedAll = [...this.map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return this.cachedAll;
   }
 
   byGroup(group: CommandDef["group"]): CommandDef[] {

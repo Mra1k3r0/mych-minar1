@@ -83,7 +83,28 @@ export type TelegramWebhookRuntime = {
   domain?: string;
   secretToken?: string;
   tunnel?: boolean;
-  tunnelProvider?: "localtunnel" | "untun";
+  tunnelProvider?: "localtunnel" | "cloudflared" | "ngrok" | "localexpose";
+  tunnelOptions?: {
+    localtunnel?: {
+      host?: string;
+      subdomain?: string;
+      localHttps?: boolean;
+    };
+    cloudflared?: {
+      binaryPath?: string;
+    };
+    ngrok?: {
+      authtoken?: string;
+      binaryPath?: string;
+    };
+    localexpose?: {
+      authToken?: string;
+      binaryPath?: string;
+      region?: string;
+      subdomain?: string;
+      reservedDomain?: string;
+    };
+  };
 };
 
 function parseBoolean(raw: string | undefined): boolean | undefined {
@@ -100,10 +121,14 @@ function getBoolean(obj: unknown, key: string): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
 }
 
-function parseTunnelProvider(raw: string | undefined): "localtunnel" | "untun" | undefined {
+function parseTunnelProvider(
+  raw: string | undefined,
+): "localtunnel" | "cloudflared" | "ngrok" | "localexpose" | undefined {
   if (!raw) return undefined;
   const v = raw.trim().toLowerCase();
-  if (v === "localtunnel" || v === "untun") return v;
+  if (v === "localtunnel" || v === "cloudflared" || v === "ngrok" || v === "localexpose") {
+    return v;
+  }
   return undefined;
 }
 
@@ -171,6 +196,63 @@ const telegramTransport: TelegramTransport =
 
 const webhookFromFile = botFromFile ? getObject(botFromFile, "webhook") : undefined;
 
+function readTunnelOptionsFromFile(webhookObj: Record<string, unknown> | undefined) {
+  const tunnelOptions = getObject(webhookObj, "tunnelOptions");
+  const localtunnel = getObject(tunnelOptions, "localtunnel");
+  const cloudflared = getObject(tunnelOptions, "cloudflared");
+  const ngrok = getObject(tunnelOptions, "ngrok");
+  const localexpose = getObject(tunnelOptions, "localexpose");
+
+  const out: NonNullable<TelegramWebhookRuntime["tunnelOptions"]> = {};
+
+  if (localtunnel) {
+    out.localtunnel = {
+      ...(getString(localtunnel, "host") ? { host: getString(localtunnel, "host") } : {}),
+      ...(getString(localtunnel, "subdomain")
+        ? { subdomain: getString(localtunnel, "subdomain") }
+        : {}),
+      ...(getBoolean(localtunnel, "localHttps") !== undefined
+        ? { localHttps: getBoolean(localtunnel, "localHttps") }
+        : {}),
+    };
+  }
+
+  if (cloudflared) {
+    out.cloudflared = {
+      ...(getString(cloudflared, "binaryPath")
+        ? { binaryPath: getString(cloudflared, "binaryPath") }
+        : {}),
+    };
+  }
+
+  if (ngrok) {
+    out.ngrok = {
+      ...(getString(ngrok, "authtoken") ? { authtoken: getString(ngrok, "authtoken") } : {}),
+      ...(getString(ngrok, "binaryPath") ? { binaryPath: getString(ngrok, "binaryPath") } : {}),
+    };
+  }
+
+  if (localexpose) {
+    out.localexpose = {
+      ...(getString(localexpose, "authToken")
+        ? { authToken: getString(localexpose, "authToken") }
+        : {}),
+      ...(getString(localexpose, "binaryPath")
+        ? { binaryPath: getString(localexpose, "binaryPath") }
+        : {}),
+      ...(getString(localexpose, "region") ? { region: getString(localexpose, "region") } : {}),
+      ...(getString(localexpose, "subdomain")
+        ? { subdomain: getString(localexpose, "subdomain") }
+        : {}),
+      ...(getString(localexpose, "reservedDomain")
+        ? { reservedDomain: getString(localexpose, "reservedDomain") }
+        : {}),
+    };
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function webhookMerged(): TelegramWebhookRuntime | undefined {
   if (telegramTransport !== "webhook") return undefined;
   const filePort = getNumber(webhookFromFile ?? undefined, "port");
@@ -202,6 +284,7 @@ function webhookMerged(): TelegramWebhookRuntime | undefined {
     parseTunnelProvider(process.env.WEBHOOK_TUNNEL_PROVIDER) ??
     parseTunnelProvider(getString(webhookFromFile ?? undefined, "tunnelProvider")) ??
     "localtunnel";
+  const tunnelOptions = readTunnelOptionsFromFile(webhookFromFile);
 
   return {
     port,
@@ -211,6 +294,7 @@ function webhookMerged(): TelegramWebhookRuntime | undefined {
     ...(secretToken !== undefined ? { secretToken } : {}),
     ...(tunnel !== undefined ? { tunnel } : {}),
     tunnelProvider,
+    ...(tunnelOptions !== undefined ? { tunnelOptions } : {}),
   };
 }
 

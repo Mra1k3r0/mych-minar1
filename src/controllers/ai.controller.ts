@@ -14,111 +14,41 @@ import { renderTelegramRichText } from "@mra1k3r0/gramora";
 import { guardMathExpression } from "../utils/security.js";
 import { sendRichText } from "../services/telegram/rich.js";
 import { buildTelegramContext } from "../services/telegram-context.js";
-import { Parser } from "expr-eval";
-import { FunController } from "./fun.controller.js";
-import { CoreController } from "./core.controller.js";
-import { AdminController } from "./admin.controller.js";
-import { normalizeCommandIntentMap } from "../data/cmd-intent.schema.js";
-import { getCommandIntentData } from "../services/command/store.js";
+import { Parser } from "expr-eval-fork";
 import { extractCommandName, findClosestCommandName } from "../commands/suggest.js";
-
-function buildCommandIntentMeta() {
-  const raw = normalizeCommandIntentMap(getCommandIntentData());
-  const out: Partial<Record<string, (typeof raw)[string]>> = {};
-  for (const [name, meta] of Object.entries(raw)) {
-    const fromRegistry = commandRegistry.get(name);
-    out[name] = {
-      group: meta.group ?? fromRegistry?.group ?? "core",
-      ...meta,
-    };
-  }
-  return Object.freeze(out);
-}
-
-const COMMAND_INTENT_META: Readonly<
-  Partial<Record<string, ReturnType<typeof normalizeCommandIntentMap>[string]>>
-> = buildCommandIntentMeta();
-const COMMAND_KEYWORD_INDEX = Object.freeze(
-  Object.entries(COMMAND_INTENT_META)
-    .map(([command, meta]) => {
-      if (!meta) return null;
-      const tokens = [
-        ...(meta.matchCommandName ? [command] : []),
-        ...meta.aliases,
-        ...meta.keywords,
-      ];
-      return {
-        command,
-        patterns: Object.freeze(
-          tokens
-            .filter((t) => t.trim().length > 0)
-            .map((t) => {
-              const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              return t.includes(" ")
-                ? new RegExp(`(?:^|\\b)${escaped}(?:\\b|$)`, "i")
-                : new RegExp(`\\b${escaped}\\b`, "i");
-            }),
-        ),
-      };
-    })
-    .filter((row): row is { command: string; patterns: readonly RegExp[] } => row !== null),
-);
-const COMMAND_ALIAS_INDEX = Object.freeze(
-  Object.entries(COMMAND_INTENT_META).reduce<Record<string, string>>((acc, [command, meta]) => {
-    if (!meta) return acc;
-    for (const alias of meta.aliases) {
-      const key = alias.trim().toLowerCase();
-      if (!key) continue;
-      if (acc[key] || commandRegistry.get(key)) continue;
-      acc[key] = command;
-    }
-    return acc;
-  }, {}),
-);
-const COMMAND_LIST_QUERY_RE =
-  /(what commands|available commands|command list|list commands|help commands|show commands|feature list|features|what can you do|what can u do|what else can you do|what else u can do|what you can do|capabilities|list of commands|your commands|full command)/;
-
-function resolveAliasTarget(commandName: string): string | null {
-  const key = commandName.trim().toLowerCase();
-  if (!key) return null;
-  return COMMAND_ALIAS_INDEX[key] ?? null;
-}
-
-function metaForCommand(command: string) {
-  const fromMeta = COMMAND_INTENT_META[command];
-  if (fromMeta) return fromMeta;
-  const fromRegistry = commandRegistry.get(command);
-  return {
-    group: fromRegistry?.group ?? "core",
-    autoExecutable: false,
-    requiresArgs: false,
-    argsHint: "optional",
-    examples: [command],
-    keywords: [],
-    aliases: [],
-    matchCommandName: true,
-    neverNeedsClarify: false,
-    clarifyPrompt: `what should i use for /${command}?`,
-  };
-}
-
-type AiCommandRunner = (gram: BaseContext) => Promise<void>;
-export const aiCommandBridge: {
-  ask?: AiCommandRunner;
-  chat?: AiCommandRunner;
-  agent?: AiCommandRunner;
-  clear?: AiCommandRunner;
-} = {};
+import {
+  findKeywordCommand,
+  getAutoExecutableCommands,
+  isCommandListQuery,
+  metaForCommand,
+  parseCommandIntent,
+  resolveAliasTarget,
+} from "../services/ai/intent.js";
+import {
+  normalizePlannerActionDecision,
+  parsePlannerIntentJson,
+  pickBestVotedIntent,
+} from "../services/ai/plan.js";
+import { aiCommandBridge } from "../services/ai/bridge.js";
+import {
+  commandCatalogJson,
+  commandCatalogText,
+  commandListCompact,
+  detectCommandGroupPreference,
+  localCommandListHeader,
+  renderCommandCatalog,
+} from "../services/ai/catalog.js";
+import {
+  runAutoExec,
+  shouldClarifyCommandExec,
+  shouldClarifyMediaExec,
+} from "../services/ai/autoexec.js";
 
 @Controller()
 export class AiController {
   private pendingIntent = new Map<number, { command: string; baseArgs?: string }>();
   private lastAutoAction = new Map<number, { command: string; args: string; ts: number }>();
-  private readonly autoExecutableCommands = new Set(
-    Object.entries(COMMAND_INTENT_META)
-      .filter(([, meta]) => Boolean(meta?.autoExecutable))
-      .map(([name]) => name),
-  );
+  private readonly autoExecutableCommands = getAutoExecutableCommands();
   private readonly mathParser = new Parser({
     operators: {
       logical: false,
@@ -138,8 +68,8 @@ export class AiController {
   private async decideAssistantAction(
     text: string,
   ): Promise<{ mode: "execute" | "chat"; command?: string; args?: string; confidence: number }> {
-    const commandList = this.commandListCompact();
-    const catalogJson = this.commandCatalogJson();
+    const commandList = commandListCompact();
+    const catalogJson = commandCatalogJson(this.autoExecutableCommands);
     try {
       const { message } = await llm.chat([
         {
@@ -171,31 +101,11 @@ export class AiController {
         },
         { role: "user", content: text },
       ]);
-      const parsed = this.parseIntentJson(message.content ?? "");
-      if (!parsed) return { mode: "chat", confidence: 0 };
-      if (!parsed.command) return { mode: "chat", confidence: parsed.confidence };
-      if (!commandRegistry.get(parsed.command))
-        return { mode: "chat", confidence: parsed.confidence };
-      return {
-        mode: parsed.confidence >= 0.58 ? "execute" : "chat",
-        command: parsed.command,
-        args: parsed.args,
-        confidence: parsed.confidence,
-      };
+      const parsed = parsePlannerIntentJson(message.content ?? "");
+      return normalizePlannerActionDecision(parsed, (name) => Boolean(commandRegistry.get(name)));
     } catch {
       return { mode: "chat", confidence: 0 };
     }
-  }
-
-  private readonly fun = new FunController();
-  private readonly core = new CoreController();
-  private readonly admin = new AdminController();
-
-  private formatCommandListHuman(gram: BaseContext): string {
-    const from = gram.message?.from;
-    const username = from?.username ? `@${from.username}` : "bro";
-    const lines = commandRegistry.all().map((c) => `/${c.name} - ${c.description}`);
-    return [`Sure ${username}, here are my real commands:`, "", ...lines].join("\n");
   }
 
   private isGroqProvider(): boolean {
@@ -245,16 +155,13 @@ export class AiController {
 
   private async maybeSendCreativeCommandList(gram: BaseContext, text: string): Promise<boolean> {
     const lower = this.localPromptize(text);
-    if (!COMMAND_LIST_QUERY_RE.test(lower)) {
+    if (!isCommandListQuery(lower)) {
       return false;
     }
-    const preferredGroup = this.detectCommandGroupPreference(lower);
+    const preferredGroup = detectCommandGroupPreference(lower);
     const wantsGrouped = /(category|group|by categ|by category|categor)/.test(lower);
-    const grouped = this.renderCommandCatalog(
-      wantsGrouped || Boolean(preferredGroup),
-      preferredGroup,
-    );
-    const fallbackHeader = this.localCommandListHeader(gram);
+    const grouped = renderCommandCatalog(wantsGrouped || Boolean(preferredGroup), preferredGroup);
+    const fallbackHeader = localCommandListHeader(gram);
     if (this.isLlmBudgetTight()) {
       await this.sendAi(gram, [fallbackHeader, "", ...grouped].join("\n"));
       return true;
@@ -278,7 +185,7 @@ export class AiController {
       const m = message.content?.match(/\{[\s\S]*\}/);
       const parsed = m ? (JSON.parse(m[0]) as { header?: string }) : {};
       const headerRaw = (parsed.header ?? "").trim();
-      const header = headerRaw.length >= 4 ? headerRaw : this.localCommandListHeader(gram);
+      const header = headerRaw.length >= 4 ? headerRaw : localCommandListHeader(gram);
       await this.sendAi(gram, [header, "", ...grouped].join("\n"));
       return true;
     } catch {
@@ -287,285 +194,8 @@ export class AiController {
     }
   }
 
-  private localCommandListHeader(gram: BaseContext): string {
-    const from = gram.message?.from;
-    const username = from?.username ? `@${from.username}` : "bro";
-    const headers = [
-      `Here ${username}, full command list is ready:`,
-      `Sure ${username} — here’s your live command board:`,
-      `Aight ${username}, I got you. Full list below:`,
-      `Yo ${username}, here are all commands I can run right now:`,
-      `Done ${username} ✅ full feature/command list below:`,
-    ];
-    return headers[Math.floor(Math.random() * headers.length)];
-  }
-
-  private renderCommandCatalog(
-    grouped: boolean,
-    preferredGroup?: "core" | "ai" | "admin" | "fun",
-  ): string[] {
-    const all = commandRegistry.all();
-    const filtered = preferredGroup ? all.filter((c) => c.group === preferredGroup) : all;
-    if (!grouped) return filtered.map((c) => `/${c.name} - ${c.description}`);
-    const order: Array<"core" | "ai" | "admin" | "fun"> = ["core", "ai", "admin", "fun"];
-    const title: Record<(typeof order)[number], string> = {
-      core: "Core",
-      ai: "AI",
-      admin: "Admin",
-      fun: "Fun",
-    };
-    const lines: string[] = [];
-    for (const g of order) {
-      if (preferredGroup && g !== preferredGroup) continue;
-      const items = filtered.filter((c) => c.group === g);
-      if (!items.length) continue;
-      lines.push(`${title[g]}:`);
-      lines.push(...items.map((c) => `/${c.name} - ${c.description}`));
-      lines.push("");
-    }
-    return lines.length > 0 ? lines.slice(0, -1) : [];
-  }
-
-  private detectCommandGroupPreference(text: string): "core" | "ai" | "admin" | "fun" | undefined {
-    if (!text) return undefined;
-    if (/\b(fun|funny|game|games|meme|random|entertainment|playful)\b/.test(text)) return "fun";
-    if (/\b(admin|owner|ops|status|stats|budget)\b/.test(text)) return "admin";
-    if (/\b(ai|agent|chat|llm)\b/.test(text)) return "ai";
-    if (/\b(core|basic|utility|utilities)\b/.test(text)) return "core";
-    return undefined;
-  }
-
   private isCommandListQuery(text: string): boolean {
-    const lower = this.localPromptize(text);
-    return COMMAND_LIST_QUERY_RE.test(lower);
-  }
-
-  private commandListCompact(): string {
-    return commandRegistry
-      .all()
-      .map((c) => `/${c.name}`)
-      .join(", ");
-  }
-
-  private commandCatalogJson(): string {
-    const catalog = commandRegistry.all().map((c) => {
-      const meta = metaForCommand(c.name);
-      return {
-        name: c.name,
-        slash: `/${c.name}`,
-        group: c.group,
-        description: c.description,
-        autoExecutable: this.autoExecutableCommands.has(c.name),
-        requiresArgs: meta.requiresArgs,
-        argsHint: meta.argsHint,
-        examples: meta.examples,
-      };
-    });
-    return JSON.stringify(catalog, null, 2);
-  }
-
-  private isVagueMediaArgs(args: string): boolean {
-    const v = args.trim().toLowerCase();
-    if (!v) return true;
-    if (v.length < 5) return true;
-    const tokens = v.split(/\s+/).filter(Boolean);
-    const generic = new Set([
-      "some",
-      "any",
-      "cool",
-      "good",
-      "nice",
-      "random",
-      "music",
-      "song",
-      "video",
-      "something",
-      "play",
-      "please",
-      "i",
-      "want",
-      "me",
-      "the",
-      "a",
-      "an",
-    ]);
-    const specificTokens = tokens.filter((t) => !generic.has(t) && t.length >= 3);
-    if (specificTokens.length >= 2) return false;
-    return (
-      /\b(some|any|cool|good|nice|random|music|song|video|something)\b/.test(v) &&
-      tokens.length <= 4
-    );
-  }
-
-  private fallbackMediaQuery(command: "play" | "video"): string {
-    if (command === "play") {
-      const picks = [
-        "chill pop hits official audio",
-        "lofi chill beats official",
-        "trending pop songs official audio",
-      ];
-      return picks[Math.floor(Math.random() * picks.length)];
-    }
-    const picks = [
-      "best music videos official",
-      "trending pop music video official",
-      "chill music video official",
-    ];
-    return picks[Math.floor(Math.random() * picks.length)];
-  }
-
-  private async optimizeMediaQuery(
-    command: "play" | "video",
-    userText: string,
-    currentArgs: string,
-  ): Promise<string> {
-    if (!this.isVagueMediaArgs(currentArgs)) return currentArgs;
-    try {
-      const { message } = await llm.chat([
-        {
-          role: "system",
-          content: this.promptByProvider(
-            [
-              "Rewrite the user's media request into one concise YouTube search query.",
-              "Return plain text only (no quotes, no markdown).",
-              `Target command: /${command}`,
-              command === "play"
-                ? "Prefer music-focused audio query terms like official audio, lyrics, chill, pop, lofi."
-                : "Prefer video-focused query terms like official video, live performance, mv.",
-              "Max 70 characters.",
-            ],
-            [
-              `Rewrite to short YouTube query for /${command}.`,
-              "Plain text only, <=70 chars.",
-              command === "play" ? "Music-focused keywords." : "Video-focused keywords.",
-            ],
-          ),
-        },
-        { role: "user", content: userText },
-      ]);
-      const optimized = (message.content ?? "").trim().replace(/^["'`]+|["'`]+$/g, "");
-      if (optimized.length >= 4) return optimized.slice(0, 70);
-    } catch {
-      // Silent fallback: local query fallback handles this path.
-    }
-    return this.fallbackMediaQuery(command);
-  }
-
-  private async enhanceCommandArgs(
-    command: string,
-    userText: string,
-    args: string,
-  ): Promise<string> {
-    if (command === "play" || command === "video") {
-      return this.optimizeMediaQuery(command, userText, args);
-    }
-
-    if (command === "vtuber") {
-      const argText = args.trim();
-      if (argText) return argText;
-      const lower = this.localPromptize(userText);
-      const namedMatch =
-        /\b(gura|pekora|korone|uto|mumei|koyori|fubuki|chloe|ayame|polka|botan|amelia|okayu|watame|aloe|marine|coco|rushia)\b/.exec(
-          lower,
-        )?.[1] ?? null;
-      const who = namedMatch ?? (/\brandom\b/.test(lower) ? "random" : "random");
-      const count = /\b([1-3])\b/.exec(lower)?.[1] ?? "1";
-      return `${who} ${count}`;
-    }
-
-    return args;
-  }
-
-  private async shouldClarifyMedia(
-    command: "play" | "video",
-    userText: string,
-    args: string,
-  ): Promise<boolean> {
-    if (!this.isVagueMediaArgs(args)) return false;
-    if (this.isLlmBudgetTight()) return true;
-    try {
-      const { message } = await llm.chat([
-        {
-          role: "system",
-          content: this.promptByProvider(
-            [
-              "Decide whether the assistant should ask a clarification question before executing media command.",
-              'Return JSON only: {"ask": boolean, "reason": string}',
-              `Command: /${command}`,
-              "Ask=true only when query is too ambiguous and likely to produce poor results.",
-              "If there is enough intent/context, ask=false.",
-            ],
-            [
-              `Should ask clarification before /${command}?`,
-              'JSON only {"ask":boolean,"reason":string}',
-              "ask=true only if ambiguous.",
-            ],
-          ),
-        },
-        { role: "user", content: `userText=${userText}\nargs=${args}` },
-      ]);
-      const m = message.content?.match(/\{[\s\S]*\}/);
-      if (!m) return false;
-      const parsed = JSON.parse(m[0]) as { ask?: boolean };
-      return Boolean(parsed.ask);
-    } catch {
-      return this.isVagueMediaArgs(args);
-    }
-  }
-
-  private commandLikelyNeedsArgs(command: string): boolean {
-    return metaForCommand(command).requiresArgs;
-  }
-
-  private commandNeverNeedsClarify(command: string): boolean {
-    return metaForCommand(command).neverNeedsClarify;
-  }
-
-  private defaultClarifyPrompt(command: string): string {
-    return metaForCommand(command).clarifyPrompt;
-  }
-
-  private async shouldClarifyCommand(
-    command: string,
-    userText: string,
-    args: string,
-  ): Promise<{ ask: boolean; prompt: string }> {
-    if (this.commandNeverNeedsClarify(command)) {
-      return { ask: false, prompt: this.defaultClarifyPrompt(command) };
-    }
-    if (this.isLlmBudgetTight()) {
-      const ask = this.commandLikelyNeedsArgs(command) && !args.trim();
-      return { ask, prompt: this.defaultClarifyPrompt(command) };
-    }
-    try {
-      const { message } = await llm.chat([
-        {
-          role: "system",
-          content: [
-            "Decide whether to ask a follow-up question before executing a bot command.",
-            'Return JSON only: {"ask": boolean, "prompt": string}',
-            "ask=true when user intent is missing critical details for good execution.",
-            "ask=false when execution can proceed confidently.",
-            "Command catalog JSON:",
-            this.commandCatalogJson(),
-          ].join("\n"),
-        },
-        { role: "user", content: `command=${command}\nuserText=${userText}\nargs=${args}` },
-      ]);
-      const m = message.content?.match(/\{[\s\S]*\}/);
-      if (!m) return { ask: false, prompt: this.defaultClarifyPrompt(command) };
-      const parsed = JSON.parse(m[0]) as { ask?: boolean; prompt?: string };
-      return {
-        ask: Boolean(parsed.ask),
-        prompt:
-          typeof parsed.prompt === "string" && parsed.prompt.trim()
-            ? parsed.prompt.trim()
-            : this.defaultClarifyPrompt(command),
-      };
-    } catch {
-      const ask = this.commandLikelyNeedsArgs(command) && !args.trim();
-      return { ask, prompt: this.defaultClarifyPrompt(command) };
-    }
+    return isCommandListQuery(this.localPromptize(text));
   }
 
   private async decidePendingFollowup(
@@ -600,9 +230,9 @@ export class AiController {
             "- mode=switch: user asks a different command; command must be valid slash command name without '/'.",
             "- mode=chat: user is not providing actionable follow-up.",
             "- never invent command names.",
-            "Available commands: " + this.commandListCompact(),
+            "Available commands: " + commandListCompact(),
             "Command catalog JSON:",
-            this.commandCatalogJson(),
+            commandCatalogJson(this.autoExecutableCommands),
           ].join("\n"),
         },
         {
@@ -610,7 +240,7 @@ export class AiController {
           content: `pending_command=${pendingCommand}\npending_args=${pendingArgs}\nfollowup=${followupText}`,
         },
       ]);
-      const parsed = this.parseIntentJson(message.content ?? "");
+      const parsed = parsePlannerIntentJson(message.content ?? "");
       if (!parsed)
         return {
           mode: "continue",
@@ -843,11 +473,6 @@ export class AiController {
     return map[lang] ?? "txt";
   }
 
-  private commandCatalogText(): string {
-    const lines = commandRegistry.all().map((c) => `/${c.name} - ${c.description}`);
-    return ["Available bot commands (source of truth):", ...lines].join("\n");
-  }
-
   private capabilityContext(mode: "chat" | "agent"): string {
     const modeCapabilities =
       mode === "agent"
@@ -865,7 +490,7 @@ export class AiController {
             "When suggesting commands, use exact slash format from the source-of-truth list.",
             "Do not tell users to use /ask during normal conversation.",
           ];
-    return [...modeCapabilities, "", this.commandCatalogText()].join("\n");
+    return [...modeCapabilities, "", commandCatalogText()].join("\n");
   }
 
   private fastPath(gram: BaseContext, text: string): string | null {
@@ -952,12 +577,7 @@ export class AiController {
   }
 
   private findKeywordCommand(text: string): string | null {
-    for (const entry of COMMAND_KEYWORD_INDEX) {
-      for (const pattern of entry.patterns) {
-        if (pattern.test(text)) return entry.command;
-      }
-    }
-    return null;
+    return findKeywordCommand(text);
   }
 
   private shouldUseHeavyIntentPlanning(text: string): boolean {
@@ -981,71 +601,7 @@ export class AiController {
   }
 
   private parseCommandIntent(text: string): { command: string; args: string } | null {
-    const raw = text.trim();
-    const lower = raw.toLowerCase();
-    const firstPersonSocialQuery =
-      /^(?:can|could|may|should)\s+i\s+(?:get|have|do|give|send|use|try\s+)?(kiss|hug|pat|cuddle|slap)\b/.test(
-        lower,
-      ) && /\byou\b/.test(lower);
-    if (firstPersonSocialQuery) return null;
-    const slash = raw.match(/^\/([a-z0-9_]+)(?:\s+([\s\S]+))?$/i);
-    if (slash?.[1]) {
-      const name = slash[1].toLowerCase();
-      if (commandRegistry.get(name))
-        return { command: name, args: typeof slash[2] === "string" ? slash[2].trim() : "" };
-      return null;
-    }
-
-    const direct = raw.match(/^(?:please\s+)?([a-z0-9_]+)(?:\s+([\s\S]+))?$/i);
-    if (direct?.[1]) {
-      const probe = direct[1].toLowerCase();
-      const mapped = Object.keys(COMMAND_INTENT_META).find(
-        (name) => name === probe || metaForCommand(name).aliases.includes(probe),
-      );
-      if (mapped)
-        return { command: mapped, args: typeof direct[2] === "string" ? direct[2].trim() : "" };
-    }
-
-    const actionish =
-      /\b(send|give|show|fetch|drop|make|want|need|do|pls|please|can you|could you)\b/.test(lower);
-    const matchedKeyword = this.findKeywordCommand(lower);
-    const wantsReaction =
-      matchedKeyword &&
-      new Set(["cat", "dog", "neko", "hug", "kiss", "pat", "cuddle", "slap", "meme", "vtuber"]).has(
-        matchedKeyword,
-      )
-        ? matchedKeyword
-        : null;
-    const asksForAction =
-      /\b(send|give|show|fetch|drop|want|need|do|pls|please|can you|could you)\b/.test(lower);
-    if (wantsReaction && asksForAction) {
-      return { command: wantsReaction, args: "" };
-    }
-
-    const playLike = raw.match(/\b(play|video)\s+(.+)/i);
-    if (playLike && playLike[1] && playLike[2]) {
-      return { command: playLike[1].toLowerCase(), args: playLike[2].trim() };
-    }
-
-    const hasMusicIntent =
-      /\b(song|songs|music|audio|cover|acoustic|ukulele|bgm|karaoke|playlist|listen)\b/.test(
-        lower,
-      ) || /\bi\s+want\b/.test(lower);
-    const hasVideoIntent = /\b(video|mv|clip|watch)\b/.test(lower);
-    const hasVtuberName =
-      /\b(gawr\s+gura|gura|pekora|korone|mumei|fubuki|ayame|marine|amelia)\b/.test(lower);
-    if (hasMusicIntent && hasVtuberName) {
-      return { command: "play", args: raw };
-    }
-    if (hasVideoIntent && hasVtuberName) {
-      return { command: "video", args: raw };
-    }
-
-    if (actionish && matchedKeyword) {
-      return { command: matchedKeyword, args: "" };
-    }
-
-    return null;
+    return parseCommandIntent(text);
   }
 
   private extractCommandFromAssistantText(text: string): { command: string; args: string } | null {
@@ -1140,34 +696,12 @@ export class AiController {
     );
   }
 
-  private parseIntentJson(
-    raw: string,
-  ): { command: string | null; args: string; confidence: number } | null {
-    const cleaned = raw.trim();
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      const data = JSON.parse(match[0]) as {
-        command?: string | null;
-        args?: string;
-        confidence?: number;
-      };
-      const cmd =
-        typeof data.command === "string" ? data.command.toLowerCase().replace(/^\//, "") : null;
-      const args = typeof data.args === "string" ? data.args.trim() : "";
-      const confidence = typeof data.confidence === "number" ? data.confidence : 0;
-      return { command: cmd, args, confidence };
-    } catch {
-      return null;
-    }
-  }
-
   private async detectIntentWithLlm(
     text: string,
   ): Promise<{ command: string; args: string } | null> {
-    const catalog = this.commandCatalogText();
-    const commandList = this.commandListCompact();
-    const catalogJson = this.commandCatalogJson();
+    const catalog = commandCatalogText();
+    const commandList = commandListCompact();
+    const catalogJson = commandCatalogJson(this.autoExecutableCommands);
     const prompts = [
       "Classifier A: prioritize action execution.",
       "Classifier B: prioritize avoiding hallucinations.",
@@ -1200,48 +734,10 @@ export class AiController {
             },
             { role: "user", content: text },
           ]);
-          return this.parseIntentJson(message.content ?? "");
+          return parsePlannerIntentJson(message.content ?? "");
         }),
       );
-
-      const valid = results.filter(
-        (r): r is { command: string | null; args: string; confidence: number } => !!r,
-      );
-      if (!valid.length) return null;
-
-      const votes = new Map<string, { count: number; bestConfidence: number; args: string }>();
-      for (const r of valid) {
-        if (!r.command) continue;
-        if (!commandRegistry.get(r.command)) continue;
-        const key = r.command;
-        const prev = votes.get(key);
-        if (!prev) {
-          votes.set(key, { count: 1, bestConfidence: r.confidence, args: r.args });
-        } else {
-          votes.set(key, {
-            count: prev.count + 1,
-            bestConfidence: Math.max(prev.bestConfidence, r.confidence),
-            args: r.confidence >= prev.bestConfidence ? r.args : prev.args,
-          });
-        }
-      }
-
-      let best: { command: string; count: number; bestConfidence: number; args: string } | null =
-        null;
-      for (const [command, score] of votes.entries()) {
-        const candidate = { command, ...score };
-        if (
-          !best ||
-          candidate.count > best.count ||
-          (candidate.count === best.count && candidate.bestConfidence > best.bestConfidence)
-        ) {
-          best = candidate;
-        }
-      }
-      if (!best) return null;
-      if (best.count < 2 && best.bestConfidence < 0.8) return null;
-      if (best.bestConfidence < 0.55) return null;
-      return { command: best.command, args: best.args };
+      return pickBestVotedIntent(results, (name) => Boolean(commandRegistry.get(name)));
     } catch {
       return null;
     }
@@ -1252,110 +748,39 @@ export class AiController {
     command: string,
     args: string,
   ): Promise<boolean> {
-    const effectiveArgs = await this.enhanceCommandArgs(command, gram.text ?? "", args);
-    const patchedText = `/${command}${effectiveArgs ? ` ${effectiveArgs}` : ""}`;
-    const patchedGram = new Proxy(gram, {
-      get(target, prop, receiver) {
-        if (prop === "text") return patchedText;
-        const value: unknown = Reflect.get(target, prop, receiver);
-        return value;
-      },
+    return runAutoExec({
+      gram,
+      command,
+      args,
+      userText: gram.text ?? "",
+      lastAutoAction: this.lastAutoAction,
+      llmChat: (messages) => llm.chat(messages),
+      promptByProvider: (full, compact) => this.promptByProvider(full, compact),
+      localPromptize: (text) => this.localPromptize(text),
     });
-    try {
-      const userId = gram.fromId;
-      const remember = () => {
-        if (userId)
-          this.lastAutoAction.set(userId, { command, args: effectiveArgs, ts: Date.now() });
-      };
-      switch (command) {
-        case "play":
-          await this.fun.play(patchedGram);
-          remember();
-          return true;
-        case "video":
-          await this.fun.video(patchedGram);
-          remember();
-          return true;
-        case "hug":
-          await this.fun.hug(patchedGram);
-          return true;
-        case "kiss":
-          await this.fun.kiss(patchedGram);
-          return true;
-        case "pat":
-          await this.fun.pat(patchedGram);
-          return true;
-        case "cuddle":
-          await this.fun.cuddle(patchedGram);
-          return true;
-        case "slap":
-          await this.fun.slap(patchedGram);
-          return true;
-        case "neko":
-          await this.fun.neko(patchedGram);
-          remember();
-          return true;
-        case "cat":
-          await this.fun.cat(patchedGram);
-          remember();
-          return true;
-        case "dog":
-          await this.fun.dog(patchedGram);
-          remember();
-          return true;
-        case "meme":
-          await this.fun.meme(patchedGram);
-          remember();
-          return true;
-        case "quote":
-          await this.fun.quote(patchedGram);
-          return true;
-        case "fact":
-          await this.fun.fact(patchedGram);
-          return true;
-        case "vtuber":
-          await this.fun.vtuber(patchedGram);
-          remember();
-          return true;
-        case "flip":
-          await this.fun.flip(patchedGram);
-          return true;
-        case "roll":
-          await this.fun.roll(patchedGram);
-          return true;
-        case "choose":
-          await this.fun.choose(patchedGram);
-          return true;
-        case "rps":
-          await this.fun.rps(patchedGram);
-          return true;
-        case "8ball":
-          await this.fun.eightBall(patchedGram);
-          return true;
-        case "help":
-          await this.core.help(patchedGram);
-          return true;
-        case "id":
-          await this.core.id(patchedGram);
-          return true;
-        case "status":
-          await this.admin.status(patchedGram);
-          return true;
-        case "stats":
-          await this.admin.stats(patchedGram);
-          return true;
-        case "uptime":
-          await this.core.uptime(patchedGram);
-          return true;
-        case "ping":
-          await this.core.ping(patchedGram);
-          return true;
-        default:
-          return false;
-      }
-    } finally {
-      // Nothing to clean up here.
-    }
+  }
+
+  private requiresArgsMissing(command: string, args: string): boolean {
+    return metaForCommand(command).requiresArgs && args.trim().length === 0;
+  }
+
+  private async promptForMissingArgs(
+    gram: BaseContext,
+    command: string,
+    args: string,
+    userText: string,
+  ): Promise<void> {
+    const userId = gram.fromId;
+    if (userId) this.pendingIntent.set(userId, { command, baseArgs: args });
+    const clarify = await shouldClarifyCommandExec({
+      command,
+      userText,
+      args,
+      llmBudgetTight: this.isLlmBudgetTight(),
+      catalogJson: commandCatalogJson(this.autoExecutableCommands),
+      llmChat: (messages) => llm.chat(messages),
+    });
+    await sendRichText(gram, clarify.prompt);
   }
 
   private async handleAdaptiveIntent(gram: BaseContext, text: string): Promise<boolean> {
@@ -1364,12 +789,14 @@ export class AiController {
     if (!this.shouldUseHeavyIntentPlanning(promptized)) return false;
     const parsedIntent = this.parseCommandIntent(promptized);
     if (parsedIntent?.command) {
-      const executed = await this.executeKnownCommand(
-        gram,
-        parsedIntent.command,
-        parsedIntent.args,
-      );
-      if (executed) return true;
+      if (!this.requiresArgsMissing(parsedIntent.command, parsedIntent.args)) {
+        const executed = await this.executeKnownCommand(
+          gram,
+          parsedIntent.command,
+          parsedIntent.args,
+        );
+        if (executed) return true;
+      }
     }
     if (this.isLlmBudgetTight()) return false;
     const optimized = this.optimizePromptInput(text);
@@ -1391,7 +818,14 @@ export class AiController {
 
     if (intent.command === "play" || intent.command === "video") {
       const mediaCommand: "play" | "video" = intent.command;
-      const shouldClarify = await this.shouldClarifyMedia(mediaCommand, text, intent.args);
+      const shouldClarify = await shouldClarifyMediaExec({
+        command: mediaCommand,
+        userText: text,
+        args: intent.args,
+        llmBudgetTight: this.isLlmBudgetTight(),
+        llmChat: (messages) => llm.chat(messages),
+        promptByProvider: (full, compact) => this.promptByProvider(full, compact),
+      });
       if (shouldClarify) {
         const userId = gram.fromId;
         if (userId)
@@ -1405,7 +839,14 @@ export class AiController {
       }
     }
 
-    const clarify = await this.shouldClarifyCommand(intent.command, text, intent.args);
+    const clarify = await shouldClarifyCommandExec({
+      command: intent.command,
+      userText: text,
+      args: intent.args,
+      llmBudgetTight: this.isLlmBudgetTight(),
+      catalogJson: commandCatalogJson(this.autoExecutableCommands),
+      llmChat: (messages) => llm.chat(messages),
+    });
     if (clarify.ask) {
       const userId = gram.fromId;
       if (userId)
@@ -1418,6 +859,11 @@ export class AiController {
 
     if (intent.command === "help" && this.isCommandListQuery(text)) {
       await this.maybeSendCreativeCommandList(gram, text);
+      return true;
+    }
+
+    if (this.requiresArgsMissing(intent.command, intent.args)) {
+      await this.promptForMissingArgs(gram, intent.command, intent.args, text);
       return true;
     }
 
@@ -1625,6 +1071,15 @@ export class AiController {
       if (pendingDecision.mode === "chat") {
         // Chat mode means "no command execution needed".
       } else if (pendingDecision.mode === "switch") {
+        if (this.requiresArgsMissing(pendingDecision.command, pendingDecision.args)) {
+          await this.promptForMissingArgs(
+            gram,
+            pendingDecision.command,
+            pendingDecision.args,
+            text,
+          );
+          return;
+        }
         const ok = await this.executeKnownCommand(
           gram,
           pendingDecision.command,
@@ -1632,8 +1087,8 @@ export class AiController {
         );
         if (ok) return;
       } else {
-        if (!pendingDecision.args && (pending.command === "play" || pending.command === "video")) {
-          await sendRichText(gram, "I still need a search term (artist/title/genre) to continue.");
+        if (this.requiresArgsMissing(pending.command, pendingDecision.args)) {
+          await this.promptForMissingArgs(gram, pending.command, pendingDecision.args, text);
           return;
         }
         const ok = await this.executeKnownCommand(gram, pending.command, pendingDecision.args);
@@ -1665,6 +1120,10 @@ export class AiController {
         /^\/[a-z0-9_]+/i.test(text.trim()) ||
         /^(another one|again|one more|more|next)$/i.test(text.trim());
       if (extracted && shouldAutoRunExtracted) {
+        if (this.requiresArgsMissing(extracted.command, extracted.args)) {
+          await this.promptForMissingArgs(gram, extracted.command, extracted.args, text);
+          return;
+        }
         const ran = await this.executeKnownCommand(gram, extracted.command, extracted.args);
         if (ran) return;
       }
@@ -1673,6 +1132,10 @@ export class AiController {
           this.parseCommandIntent(message.content ?? "") ??
           this.parseCommandIntent(this.localPromptize(text));
         if (suggested?.command) {
+          if (this.requiresArgsMissing(suggested.command, suggested.args)) {
+            await this.promptForMissingArgs(gram, suggested.command, suggested.args, text);
+            return;
+          }
           const ran = await this.executeKnownCommand(gram, suggested.command, suggested.args);
           if (ran) return;
         }

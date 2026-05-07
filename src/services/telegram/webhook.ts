@@ -5,12 +5,11 @@ import {
   type Gramora,
   type Update,
 } from "@mra1k3r0/gramora";
-import localtunnel from "localtunnel";
-import { startTunnel } from "untun";
 import Fastify from "fastify";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { Fetch } from "../http/undici.js";
+import { Fetch, FetchM } from "../http/undici.js";
 import { logger } from "../observability/logger.js";
+import { startManagedTunnel, type ManagedTunnel, type TunnelProvider } from "../tunnel.js";
 
 export type WebhookRuntimeConfig = {
   port: number;
@@ -19,16 +18,31 @@ export type WebhookRuntimeConfig = {
   domain?: string;
   secretToken?: string;
   tunnel?: boolean;
-  tunnelProvider?: "localtunnel" | "untun";
+  tunnelProvider?: TunnelProvider;
+  tunnelOptions?: {
+    localtunnel?: {
+      host?: string;
+      subdomain?: string;
+      localHttps?: boolean;
+    };
+    cloudflared?: {
+      binaryPath?: string;
+    };
+    ngrok?: {
+      authtoken?: string;
+      binaryPath?: string;
+    };
+    localexpose?: {
+      authToken?: string;
+      binaryPath?: string;
+      region?: string;
+      subdomain?: string;
+      reservedDomain?: string;
+    };
+  };
 };
 
 export type WebhookServerRuntime = {
-  close: () => Promise<void>;
-};
-
-type ManagedTunnel = {
-  provider: "localtunnel" | "untun";
-  getURL: () => Promise<string>;
   close: () => Promise<void>;
 };
 
@@ -46,11 +60,47 @@ const WEBHOOK_MAX_BODY_BYTES = 1_048_576;
 const WEBHOOK_HEALTH_INTERVAL_MS = 45_000;
 const WEBHOOK_KEEPALIVE_TIMEOUT_MS = 8_000;
 const WEBHOOK_FAILURES_BEFORE_ROTATE = 3;
-const UNTUN_DNS_WARMUP_MS = 3_000;
+const TUNNEL_DNS_WARMUP_MS = 3_000;
 const WEBHOOK_STARTUP_ROTATE_ATTEMPTS = 3;
+const WEBHOOK_PUBLIC_DNS_WAIT_TIMEOUT_MS = 20_000;
+
+const TUNNEL_FALLBACK_ORDER: TunnelProvider[] = ["localtunnel", "cloudflared", "ngrok"];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function tunnelProviderPriority(preferred?: TunnelProvider): TunnelProvider[] {
+  if (!preferred) return [...TUNNEL_FALLBACK_ORDER];
+  return [preferred, ...TUNNEL_FALLBACK_ORDER.filter((p) => p !== preferred)];
+}
+
+async function startManagedTunnelWithFallback(
+  runtime: WebhookRuntimeConfig,
+): Promise<ManagedTunnel> {
+  const providers = tunnelProviderPriority(runtime.tunnelProvider);
+  let lastError: unknown;
+  for (const provider of providers) {
+    try {
+      const tunnel = await startManagedTunnel({ ...runtime, tunnelProvider: provider });
+      if (provider !== runtime.tunnelProvider) {
+        logger.warn("telegram.webhook_tunnel_provider_fallback", {
+          preferred: runtime.tunnelProvider ?? null,
+          selected: provider,
+        });
+      }
+      return tunnel;
+    } catch (err) {
+      lastError = err;
+      logger.warn("telegram.webhook_tunnel_provider_failed", {
+        provider,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  throw new Error(
+    `Failed to start any tunnel provider (${providers.join(", ")}): ${String(lastError)}`,
+  );
 }
 
 function headerSingle(value: string | string[] | undefined): string | undefined {
@@ -65,6 +115,45 @@ function isWebhookDnsRaceError(err: unknown): boolean {
     typeof err.message === "string" &&
     err.message.toLowerCase().includes("failed to resolve host")
   );
+}
+
+function isBenignWebhookLastError(message: string | undefined): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return normalized.includes("wrong response from the webhook: 302 found");
+}
+
+function hostnameFromUrl(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+async function hasPublicDnsRecord(hostname: string): Promise<boolean> {
+  const endpoint = `https://dns.google/resolve?name=${encodeURIComponent(hostname)}&type=A`;
+  try {
+    const data = await Fetch<{ Answer?: unknown[]; Status?: number }>(endpoint, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      mode: "strict",
+      timeoutMs: 6_000,
+    });
+    if (data.Status !== 0) return false;
+    return Array.isArray(data.Answer) && data.Answer.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPublicDns(hostname: string, timeoutMs: number): Promise<boolean> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await hasPublicDnsRecord(hostname)) return true;
+    await sleep(1_000);
+  }
+  return false;
 }
 
 async function registerTelegramWebhookWithRetries(
@@ -85,39 +174,6 @@ async function registerTelegramWebhookWithRetries(
       throw err;
     }
   }
-}
-
-async function startManagedTunnel(runtime: WebhookRuntimeConfig): Promise<ManagedTunnel> {
-  const provider = runtime.tunnelProvider ?? "localtunnel";
-  if (provider === "localtunnel") {
-    const t = await localtunnel({ port: runtime.port });
-    return {
-      provider: "localtunnel",
-      getURL: () => Promise.resolve(t.url),
-      close: () => {
-        t.close();
-        return Promise.resolve();
-      },
-    };
-  }
-
-  const untunAccept =
-    typeof process.env.UNTUN_ACCEPT_CLOUDFLARE_NOTICE === "string" &&
-    ["1", "true", "yes", "on"].includes(
-      process.env.UNTUN_ACCEPT_CLOUDFLARE_NOTICE.trim().toLowerCase(),
-    );
-  const t = await startTunnel({
-    port: runtime.port,
-    acceptCloudflareNotice: untunAccept,
-  });
-  if (!t) {
-    throw new Error("Failed to create webhook tunnel (untun returned undefined).");
-  }
-  return {
-    provider: "untun",
-    getURL: t.getURL,
-    close: t.close,
-  };
 }
 
 /** Constant-time secret comparison. */
@@ -143,7 +199,7 @@ export async function startFastifyWebhookServer(
 
   if (!publicHttpsOrigin && runtime.tunnel) {
     usedTunnel = true;
-    tunnel = await startManagedTunnel(runtime);
+    tunnel = await startManagedTunnelWithFallback(runtime);
     const rawTunnelUrl = await tunnel.getURL();
     publicHttpsOrigin = normalizeWebhookOrigin(rawTunnelUrl);
     logger.info("telegram.webhook_tunnel_started", {
@@ -197,9 +253,21 @@ export async function startFastifyWebhookServer(
   if (publicHttpsOrigin) {
     let absoluteUrl = buildWebhookUrl(publicHttpsOrigin, adapter.path);
     const registerCurrentWebhook = async (attempts: number) => {
-      if (usedTunnel && tunnel?.provider === "untun") {
-        // Give quick Cloudflare tunnel DNS a brief propagation window before setWebhook.
-        await sleep(UNTUN_DNS_WARMUP_MS);
+      if (usedTunnel) {
+        // Give dynamic tunnel DNS a brief propagation window before setWebhook.
+        await sleep(TUNNEL_DNS_WARMUP_MS);
+      }
+      if (usedTunnel) {
+        const host = hostnameFromUrl(absoluteUrl);
+        if (host) {
+          const dnsReady = await waitForPublicDns(host, WEBHOOK_PUBLIC_DNS_WAIT_TIMEOUT_MS);
+          if (!dnsReady) {
+            logger.warn("telegram.webhook_dns_not_ready", {
+              host,
+              timeoutMs: WEBHOOK_PUBLIC_DNS_WAIT_TIMEOUT_MS,
+            });
+          }
+        }
       }
       await registerTelegramWebhookWithRetries(() => {
         return bot.api.setWebhook({
@@ -219,7 +287,7 @@ export async function startFastifyWebhookServer(
         });
       }
 
-      tunnel = await startManagedTunnel(runtime);
+      tunnel = await startManagedTunnelWithFallback(runtime);
       const rawTunnelUrl = await tunnel.getURL();
       publicHttpsOrigin = normalizeWebhookOrigin(rawTunnelUrl);
       absoluteUrl = buildWebhookUrl(publicHttpsOrigin, adapter.path);
@@ -271,28 +339,37 @@ export async function startFastifyWebhookServer(
               const currentUrl = typeof info.url === "string" ? info.url : "";
               const pending = info.pending_update_count ?? 0;
               const lastErr = info.last_error_message;
+              const benignLastErr = isBenignWebhookLastError(lastErr);
               const mismatch = currentUrl !== absoluteUrl;
               let healthProbeOk = true;
               if (publicHttpsOrigin) {
                 const healthUrl = buildWebhookUrl(publicHttpsOrigin, "/healthz");
                 try {
-                  await Fetch<{ ok?: boolean }>(healthUrl, {
+                  const res = await FetchM<unknown>(healthUrl, {
                     method: "GET",
                     headers: { accept: "application/json" },
                     mode: "strict",
+                    allowNon2xx: true,
                     timeoutMs: WEBHOOK_KEEPALIVE_TIMEOUT_MS,
                   });
+                  healthProbeOk = res.status >= 200 && res.status < 400;
                 } catch {
                   healthProbeOk = false;
                 }
               }
 
-              if (mismatch || typeof lastErr === "string" || pending > 20 || !healthProbeOk) {
+              if (
+                mismatch ||
+                (typeof lastErr === "string" && !benignLastErr) ||
+                pending > 20 ||
+                !healthProbeOk
+              ) {
                 logger.warn("telegram.webhook_health", {
                   expectedUrl: absoluteUrl,
                   registeredUrl: currentUrl || null,
                   pendingUpdateCount: pending,
                   lastErrorMessage: lastErr ?? null,
+                  benignLastError: benignLastErr,
                   mismatch,
                   healthProbeOk,
                 });
@@ -312,12 +389,23 @@ export async function startFastifyWebhookServer(
                 }
               }
 
-              const unhealthy = !healthProbeOk || mismatch || typeof lastErr === "string";
+              const unhealthy =
+                !healthProbeOk || mismatch || (typeof lastErr === "string" && !benignLastErr);
               if (unhealthy) {
                 consecutiveHealthFailures++;
-                if (consecutiveHealthFailures >= WEBHOOK_FAILURES_BEFORE_ROTATE) {
+                const localexposeFastRotate =
+                  tunnel?.provider === "localexpose" &&
+                  !mismatch &&
+                  (!healthProbeOk ||
+                    pending > 0 ||
+                    (typeof lastErr === "string" &&
+                      /(connection reset by peer|connection refused|context deadline exceeded)/i.test(
+                        lastErr,
+                      )));
+                const rotateThreshold = localexposeFastRotate ? 1 : WEBHOOK_FAILURES_BEFORE_ROTATE;
+                if (consecutiveHealthFailures >= rotateThreshold) {
                   await rotateTunnelAndRebind(
-                    `consecutive unhealthy checks: ${String(consecutiveHealthFailures)}`,
+                    `consecutive unhealthy checks: ${String(consecutiveHealthFailures)} (provider=${tunnel?.provider ?? "unknown"})`,
                   );
                   consecutiveHealthFailures = 0;
                 }

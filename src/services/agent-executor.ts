@@ -2,7 +2,7 @@ import { config } from "../config.js";
 import type { LlmClient, ChatMessage, ToolDefinition, ToolCall } from "./llm.js";
 import { normalizeToolOutput } from "./tool-output.js";
 import { guardMathExpression } from "../utils/security.js";
-import { Parser } from "expr-eval";
+import { Parser } from "expr-eval-fork";
 
 const AGENT_TOOLS: ToolDefinition[] = [
   {

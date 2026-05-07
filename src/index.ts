@@ -14,7 +14,7 @@ import {
   buildRuntimeOperations,
   createErrorMiddleware,
   resolveLaunchOptions,
-} from "./bootstrap/runtime.js";
+} from "./boot/runtime.js";
 import { syncBotSlashCommands } from "./services/telegram/menu.js";
 import {
   startFastifyWebhookServer,

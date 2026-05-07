@@ -103,7 +103,28 @@ export function resolveLaunchOptions():
         domain?: string;
         secretToken?: string;
         tunnel?: boolean;
-        tunnelProvider?: "localtunnel" | "untun";
+        tunnelProvider?: "localtunnel" | "cloudflared" | "ngrok" | "localexpose";
+        tunnelOptions?: {
+          localtunnel?: {
+            host?: string;
+            subdomain?: string;
+            localHttps?: boolean;
+          };
+          cloudflared?: {
+            binaryPath?: string;
+          };
+          ngrok?: {
+            authtoken?: string;
+            binaryPath?: string;
+          };
+          localexpose?: {
+            authToken?: string;
+            binaryPath?: string;
+            region?: string;
+            subdomain?: string;
+            reservedDomain?: string;
+          };
+        };
       };
     } {
   const transport: Transport = config.bot.transport === "webhook" ? "webhook" : "polling";
@@ -120,6 +141,7 @@ export function resolveLaunchOptions():
       ...(w.secretToken !== undefined ? { secretToken: w.secretToken } : {}),
       ...(w.tunnel !== undefined ? { tunnel: w.tunnel } : {}),
       ...(w.tunnelProvider !== undefined ? { tunnelProvider: w.tunnelProvider } : {}),
+      ...(w.tunnelOptions !== undefined ? { tunnelOptions: w.tunnelOptions } : {}),
     },
   };
 }

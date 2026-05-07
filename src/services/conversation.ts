@@ -46,12 +46,15 @@ export class ConversationManager {
   }
 
   setMode(userId: number, mode: "chat" | "agent") {
-    const entry = this.conversations.get(userId);
-    if (entry) {
+    let entry = this.conversations.get(userId);
+    if (!entry) {
+      entry = { messages: [], lastActivity: Date.now(), mode };
+      this.conversations.set(userId, entry);
+    } else {
       entry.mode = mode;
       entry.lastActivity = Date.now();
-      this.journal(userId, { type: "mode", mode });
     }
+    this.journal(userId, { type: "mode", mode });
   }
 
   append(userId: number, message: ChatMessage) {

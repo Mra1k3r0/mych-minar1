@@ -47,7 +47,35 @@
       "path": "/webhook",
       //   "domain": "https://your-public-host.example.com",
       "tunnel": true, // local-dev shortcut when no domain is set
-      "tunnelProvider": "localtunnel" // or "untun"
+      "tunnelProvider": "localtunnel", // or "cloudflared" | "ngrok" | "localexpose"
+      // Optional advanced per-provider tuning (all fields optional)
+      "tunnelOptions": {
+        "localtunnel": {
+          // "host": "https://localtunnel.me",
+          // "subdomain": "my-bot-dev",
+          // "localHttps": false
+        },
+        "cloudflared": {
+          // "binaryPath": "auto" // default: auto detect by OS/arch + cache/download
+          // set a fixed path only if you want to force your own binary location.
+          // "binaryPath": "C:/tools/cloudflared.exe"
+        },
+        "ngrok": {
+          // "authtoken": "your_ngrok_token",
+          // "binaryPath": "auto" // default: auto detect by OS/arch + cache/download
+          // set a fixed path only if auto-detect is not what you want.
+          // "binaryPath": "C:/tools/ngrok.exe"
+        },
+        "localexpose": {
+          // "authToken": "your_localexpose_token",
+          // "binaryPath": "auto" // default: auto detect by OS/arch + cache/download
+          // set a fixed path only if you need a custom installed binary.
+          // "binaryPath": "C:/tools/loclx.exe",
+          // "region": "ap",
+          // "subdomain": "my-temp-subdomain",
+          // "reservedDomain": "myreserved.loclx.io"
+        }
+      }
       //"secret": ""
     },
 

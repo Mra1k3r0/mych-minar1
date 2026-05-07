@@ -1,5 +1,5 @@
 import { commandRegistry } from "../registry.js";
-import { aiCommandBridge } from "../../controllers/ai.controller.js";
+import { aiCommandBridge } from "../../services/ai/bridge.js";
 
 export const CMD_CLEAR = commandRegistry.register({
   name: "clear",

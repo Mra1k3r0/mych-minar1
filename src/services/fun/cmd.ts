@@ -14,6 +14,14 @@ const RPS_EMOJI: Record<RpsMove, string> = {
   scissors: "✂️",
 };
 const BOT_TARGET_GENERIC_WORDS = new Set(["you", "u", "bot"]);
+const BOT_ID_FROM_TOKEN = (() => {
+  const raw = process.env.TELEGRAM_BOT_TOKEN?.split(":")[0]?.trim();
+  if (!raw) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+})();
+let botIdentityCache: { id?: number; username?: string } | null = null;
+let botIdentityPromise: Promise<{ id?: number; username?: string }> | null = null;
 
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== "object") return null;
@@ -101,23 +109,91 @@ function getBotAliases(): Set<string> {
   return out;
 }
 
-function isBotTarget(rawArgs: string): boolean {
+function extractMentionTargetsFromMessage(gram: BaseContext): {
+  userIds: Set<number>;
+  usernames: Set<string>;
+} {
+  const userIds = new Set<number>();
+  const usernames = new Set<string>();
+  const msg = asRecord((gram as unknown as Record<string, unknown>).message);
+  const entitiesValue = msg ? msg.entities : undefined;
+  const entities = Array.isArray(entitiesValue) ? (entitiesValue as unknown[]) : [];
+  const text = typeof gram.text === "string" ? gram.text : "";
+
+  for (const item of entities) {
+    const entity = asRecord(item);
+    if (!entity) continue;
+    const type = typeof entity.type === "string" ? entity.type : "";
+    if (type === "text_mention") {
+      const user = asRecord(entity.user);
+      const id = typeof user?.id === "number" ? user.id : undefined;
+      if (id !== undefined) userIds.add(id);
+      continue;
+    }
+    if (type === "mention") {
+      const offset = typeof entity.offset === "number" ? entity.offset : undefined;
+      const length = typeof entity.length === "number" ? entity.length : undefined;
+      if (offset === undefined || length === undefined || length <= 0) continue;
+      const token = text
+        .slice(offset, offset + length)
+        .trim()
+        .toLowerCase();
+      if (token.startsWith("@")) usernames.add(token.slice(1));
+    }
+  }
+
+  return { userIds, usernames };
+}
+
+async function getBotIdentity(gram: BaseContext): Promise<{ id?: number; username?: string }> {
+  if (botIdentityCache) return botIdentityCache;
+  if (!botIdentityPromise) {
+    botIdentityPromise = (async () => {
+      try {
+        const me = await gram.api.getMe();
+        return {
+          id: typeof me.id === "number" ? me.id : BOT_ID_FROM_TOKEN,
+          username: typeof me.username === "string" ? me.username.toLowerCase() : undefined,
+        };
+      } catch {
+        return { id: BOT_ID_FROM_TOKEN, username: undefined };
+      }
+    })();
+  }
+  botIdentityCache = await botIdentityPromise;
+  return botIdentityCache;
+}
+
+async function isBotTarget(gram: BaseContext, rawArgs: string): Promise<boolean> {
   const lower = rawArgs.trim().toLowerCase();
   if (!lower) return false;
   if (BOT_TARGET_GENERIC_WORDS.has(lower)) return true;
 
-  const aliases = getBotAliases();
-  if (!aliases.size) return false;
+  const { userIds, usernames } = extractMentionTargetsFromMessage(gram);
+  const bot = await getBotIdentity(gram);
+  if (bot.id !== undefined && userIds.has(bot.id)) return true;
+  if (bot.username && usernames.has(bot.username)) return true;
+  if (bot.username && lower.includes(`@${bot.username}`)) return true;
+  if (
+    bot.id !== undefined &&
+    (lower.includes(`tg://user?id=${String(bot.id)}`) ||
+      new RegExp(`\\b${String(bot.id)}\\b`).test(lower))
+  ) {
+    return true;
+  }
 
+  const aliases = getBotAliases();
   const tokens = lower.match(/@[a-z0-9_]+|[a-z0-9_]+/g) ?? [];
   for (const token of tokens) {
     const normalized = token.startsWith("@") ? token.slice(1) : token;
     if (aliases.has(normalized)) return true;
+    // Fallback: explicit @something_bot mention usually indicates bot targeting.
+    if (token.startsWith("@") && normalized.endsWith("bot")) return true;
   }
   return false;
 }
 
-function buildCuddleCaption(gram: BaseContext, rawArgs: string): string {
+async function buildCuddleCaption(gram: BaseContext, rawArgs: string): Promise<string> {
   const actor = mentionTag(gram);
   const targetRaw = rawArgs.trim();
   const targetLower = targetRaw.toLowerCase();
@@ -131,7 +207,7 @@ function buildCuddleCaption(gram: BaseContext, rawArgs: string): string {
       `${actor} is now in cuddle mode 🫂`,
     ]);
   }
-  if (isBotTarget(targetRaw)) {
+  if (await isBotTarget(gram, targetRaw)) {
     return pick([
       "nah, i am not your pillow today 😤",
       "you really tried to cuddle the bot? wild 😤",
@@ -145,7 +221,7 @@ function buildCuddleCaption(gram: BaseContext, rawArgs: string): string {
   ]);
 }
 
-function buildHugCaption(gram: BaseContext, rawArgs: string): string {
+async function buildHugCaption(gram: BaseContext, rawArgs: string): Promise<string> {
   const actor = mentionTag(gram);
   const targetRaw = rawArgs.trim();
   const targetLower = targetRaw.toLowerCase();
@@ -157,11 +233,13 @@ function buildHugCaption(gram: BaseContext, rawArgs: string): string {
       `${actor} receives hug buff 🤗`,
     ]);
   }
-  if (isBotTarget(targetRaw)) {
+  if (await isBotTarget(gram, targetRaw)) {
     return pick([
-      "i accept one quick hug, chill 🤖🤗",
-      "okay fine... one bot hug 🤗",
-      "hug received. no screenshot pls 🤗",
+      "w-what... a hug? i-it's not like i needed it or anything 😳🤗",
+      "okay fine, one quick hug. no teasing after this 😤🤗",
+      "bot.exe received hug and is pretending to be calm 😶🤗",
+      "hug accepted... but act normal pls 😳",
+      "hmpf. i allow this hug once 😤🤗",
     ]);
   }
   return pick([
@@ -171,7 +249,7 @@ function buildHugCaption(gram: BaseContext, rawArgs: string): string {
   ]);
 }
 
-function buildKissCaption(gram: BaseContext, rawArgs: string): string {
+async function buildKissCaption(gram: BaseContext, rawArgs: string): Promise<string> {
   const actor = mentionTag(gram);
   const targetRaw = rawArgs.trim();
   const targetLower = targetRaw.toLowerCase();
@@ -183,11 +261,13 @@ function buildKissCaption(gram: BaseContext, rawArgs: string): string {
       `${actor} receives rizz kiss 💋`,
     ]);
   }
-  if (isBotTarget(targetRaw)) {
+  if (await isBotTarget(gram, targetRaw)) {
     return pick([
-      "nah, keep that rizz away from me 😤",
-      "bot says no kisses rn 😤",
-      "too much. denied 😤",
+      "wha-?! d-don't just kiss me out of nowhere 😳💢",
+      "absolutely not. personal space, human 😤",
+      "bot says kiss request denied. try a hug maybe 😤",
+      "too bold. my tsundere shield blocked it 💢",
+      "i am filing this under emotional damage 😳💢",
     ]);
   }
   return pick([
@@ -197,7 +277,7 @@ function buildKissCaption(gram: BaseContext, rawArgs: string): string {
   ]);
 }
 
-function buildPatCaption(gram: BaseContext, rawArgs: string): string {
+async function buildPatCaption(gram: BaseContext, rawArgs: string): Promise<string> {
   const actor = mentionTag(gram);
   const targetRaw = rawArgs.trim();
   const targetLower = targetRaw.toLowerCase();
@@ -209,7 +289,7 @@ function buildPatCaption(gram: BaseContext, rawArgs: string): string {
       `${actor} received comfort pats ✋`,
     ]);
   }
-  if (isBotTarget(targetRaw)) {
+  if (await isBotTarget(gram, targetRaw)) {
     return pick(["okay one pat only 😤", "fine... pat accepted 😤", "bot patched with one pat 😤"]);
   }
   return pick([
@@ -219,7 +299,7 @@ function buildPatCaption(gram: BaseContext, rawArgs: string): string {
   ]);
 }
 
-function buildSlapCaption(gram: BaseContext, rawArgs: string): string {
+async function buildSlapCaption(gram: BaseContext, rawArgs: string): Promise<string> {
   const actor = mentionTag(gram);
   const targetRaw = rawArgs.trim();
   const targetLower = targetRaw.toLowerCase();
@@ -231,11 +311,13 @@ function buildSlapCaption(gram: BaseContext, rawArgs: string): string {
       `${actor} triggered slap mode 👋`,
     ]);
   }
-  if (isBotTarget(targetRaw)) {
+  if (await isBotTarget(gram, targetRaw)) {
     return pick([
-      "yo chill, no slapping the bot 😤",
-      "try me again and it's timeout 😤",
-      "bot dodged that slap 😤",
+      "excuse me?! no slapping the bot 😤💢",
+      "bot dodged it. ultra instinct activated 😤",
+      "one more slap attempt and i bonk back 😤💢",
+      "rude. extremely rude. i am mad now 😠",
+      "slap denied. attitude penalty applied 💢",
     ]);
   }
   return pick([
@@ -393,29 +475,29 @@ export async function runNeko(gram: BaseContext) {
 export async function runHug(gram: BaseContext) {
   const rawArgs = getArgs(gram);
   const customCaption = parseExplicitCaptionArg(rawArgs);
-  await sendNekoAction(gram, "hug", customCaption ?? buildHugCaption(gram, rawArgs));
+  await sendNekoAction(gram, "hug", customCaption ?? (await buildHugCaption(gram, rawArgs)));
 }
 
 export async function runKiss(gram: BaseContext) {
   const rawArgs = getArgs(gram);
   const customCaption = parseExplicitCaptionArg(rawArgs);
-  await sendNekoAction(gram, "kiss", customCaption ?? buildKissCaption(gram, rawArgs));
+  await sendNekoAction(gram, "kiss", customCaption ?? (await buildKissCaption(gram, rawArgs)));
 }
 
 export async function runPat(gram: BaseContext) {
   const rawArgs = getArgs(gram);
   const customCaption = parseExplicitCaptionArg(rawArgs);
-  await sendNekoAction(gram, "pat", customCaption ?? buildPatCaption(gram, rawArgs));
+  await sendNekoAction(gram, "pat", customCaption ?? (await buildPatCaption(gram, rawArgs)));
 }
 
 export async function runCuddle(gram: BaseContext) {
   const rawArgs = getArgs(gram);
   const customCaption = parseExplicitCaptionArg(rawArgs);
-  await sendNekoAction(gram, "cuddle", customCaption ?? buildCuddleCaption(gram, rawArgs));
+  await sendNekoAction(gram, "cuddle", customCaption ?? (await buildCuddleCaption(gram, rawArgs)));
 }
 
 export async function runSlap(gram: BaseContext) {
   const rawArgs = getArgs(gram);
   const customCaption = parseExplicitCaptionArg(rawArgs);
-  await sendNekoAction(gram, "slap", customCaption ?? buildSlapCaption(gram, rawArgs));
+  await sendNekoAction(gram, "slap", customCaption ?? (await buildSlapCaption(gram, rawArgs)));
 }

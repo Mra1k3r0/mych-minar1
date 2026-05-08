@@ -56,11 +56,29 @@ export function sanitizeUrl(url: string): string {
   try {
     const u = new URL(url);
 
+    // Mask Basic Auth credentials
+    if (u.username) u.username = "[redacted]";
+    if (u.password) u.password = "[redacted]";
+
     // Mask sensitive query params
     for (const key of Array.from(u.searchParams.keys())) {
       if (SENSITIVE_KEYS.includes(key.toLowerCase())) {
         u.searchParams.set(key, "[redacted]");
       }
+    }
+
+    // Mask sensitive keys in hash
+    if (u.hash) {
+      const fragment = u.hash.slice(1);
+      const params = new URLSearchParams(fragment);
+      let changed = false;
+      for (const key of Array.from(params.keys())) {
+        if (SENSITIVE_KEYS.includes(key.toLowerCase())) {
+          params.set(key, "[redacted]");
+          changed = true;
+        }
+      }
+      if (changed) u.hash = params.toString();
     }
 
     // Mask Telegram bot token in path (/bot<token>/...)
@@ -72,8 +90,11 @@ export function sanitizeUrl(url: string): string {
   } catch {
     // Fallback if URL parsing fails (e.g. relative URLs)
     let out = url;
+    // Mask user:pass@
+    out = out.replace(/(\/\/)([^:/]+):([^@/]+)@/, "$1[redacted]:[redacted]@");
+
     for (const key of SENSITIVE_KEYS) {
-      const regex = new RegExp(`([?&]${key}=)[^&]*`, "gi");
+      const regex = new RegExp(`([?&#]${key}=)[^&#]*`, "gi");
       out = out.replace(regex, "$1[redacted]");
     }
     return out.replace(/\/bot[^/?#\s]+/, "/bot[redacted]");

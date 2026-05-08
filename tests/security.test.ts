@@ -106,3 +106,39 @@ void test("sanitizeUrl should use exact key matching for parameters", () => {
     "Should mask exact 'key' parameter",
   );
 });
+
+void test("sanitizeUrl should mask Basic Auth credentials", () => {
+  const url = "https://user:pass@example.com/api";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(!sanitized.includes("user"), "Should mask username");
+  assert.ok(!sanitized.includes("pass"), "Should mask password");
+  assert.ok(
+    sanitized.includes("[redacted]") || sanitized.includes("%5Bredacted%5D"),
+    "Should include redacted placeholder",
+  );
+});
+
+void test("sanitizeUrl should mask sensitive keys in fragments", () => {
+  const url = "https://example.com/#token=secret123&other=val";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(!sanitized.includes("secret123"), "Should mask sensitive value in fragment");
+  assert.ok(sanitized.includes("other=val"), "Should preserve non-sensitive fragment parts");
+  assert.ok(
+    sanitized.includes("[redacted]") || sanitized.includes("%5Bredacted%5D"),
+    "Should include redacted placeholder",
+  );
+});
+
+void test("sanitizeUrl fallback should mask Basic Auth in non-standard URLs", () => {
+  const url = "//user:pass@example.com/relative";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(!sanitized.includes("user"), "Should mask username in fallback");
+  assert.ok(!sanitized.includes("pass"), "Should mask password in fallback");
+});
+
+void test("sanitizeUrl fallback should mask sensitive keys in all parts", () => {
+  const url = "/api?token=secret1#key=secret2";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(!sanitized.includes("secret1"), "Should mask token in fallback");
+  assert.ok(!sanitized.includes("secret2"), "Should mask key in fallback");
+});

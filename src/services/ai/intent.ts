@@ -30,22 +30,26 @@ const COMMAND_KEYWORD_INDEX = Object.freeze(
         ...(meta.matchCommandName ? [command] : []),
         ...meta.aliases,
         ...meta.keywords,
-      ];
+      ]
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+
+      if (tokens.length === 0) return null;
+
+      // sort by length descending to ensure longer matches take precedence in alternation
+      tokens.sort((a, b) => b.length - a.length);
+
+      const patterns = tokens.map((t) => {
+        const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return t.includes(" ") ? `(?:^|\\b)${escaped}(?:\\b|$)` : `\\b${escaped}\\b`;
+      });
+
       return {
         command,
-        patterns: Object.freeze(
-          tokens
-            .filter((t) => t.trim().length > 0)
-            .map((t) => {
-              const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              return t.includes(" ")
-                ? new RegExp(`(?:^|\\b)${escaped}(?:\\b|$)`, "i")
-                : new RegExp(`\\b${escaped}\\b`, "i");
-            }),
-        ),
+        mergedPattern: new RegExp(patterns.join("|"), "i"),
       };
     })
-    .filter((row): row is { command: string; patterns: readonly RegExp[] } => row !== null),
+    .filter((row): row is { command: string; mergedPattern: RegExp } => row !== null),
 );
 
 const COMMAND_ALIAS_INDEX = Object.freeze(
@@ -98,10 +102,10 @@ export function isCommandListQuery(text: string): boolean {
 }
 
 export function findKeywordCommand(text: string): string | null {
-  for (const entry of COMMAND_KEYWORD_INDEX) {
-    for (const pattern of entry.patterns) {
-      if (pattern.test(text)) return entry.command;
-    }
+  // performance: reduce .test() calls by using merged regex per command (O(N) vs O(N*M))
+  for (let i = 0; i < COMMAND_KEYWORD_INDEX.length; i++) {
+    const entry = COMMAND_KEYWORD_INDEX[i];
+    if (entry.mergedPattern.test(text)) return entry.command;
   }
   return null;
 }

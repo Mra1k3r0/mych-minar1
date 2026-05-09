@@ -35,7 +35,7 @@ export function guardMathExpression(expression: string): GuardResult {
 }
 
 /**
- * Masks sensitive information in URLs (API keys, bot tokens).
+ * Masks sensitive information in URLs (API keys, bot tokens, credentials).
  */
 export function sanitizeUrl(url: string): string {
   const SENSITIVE_KEYS = [
@@ -53,13 +53,28 @@ export function sanitizeUrl(url: string): string {
     "passwd",
   ];
 
+  // redact basic auth early as URL constructor may misinterpret it as protocol if it contains a colon
+  let out = url.replace(/^([^:/?#\s]+):([^@/?#\s]+)@/, "[redacted]:[redacted]@");
+
   try {
-    const u = new URL(url);
+    const u = new URL(out);
+
+    // redact basic auth in valid URLs (if not already handled)
+    if (u.username) u.username = "[redacted]";
+    if (u.password) u.password = "[redacted]";
 
     // Mask sensitive query params
     for (const key of Array.from(u.searchParams.keys())) {
       if (SENSITIVE_KEYS.includes(key.toLowerCase())) {
         u.searchParams.set(key, "[redacted]");
+      }
+    }
+
+    // Mask sensitive keys in fragment (hash)
+    if (u.hash) {
+      for (const key of SENSITIVE_KEYS) {
+        const regex = new RegExp(`([?&#]${key}=)[^&#]*`, "gi");
+        u.hash = u.hash.replace(regex, "$1[redacted]");
       }
     }
 
@@ -71,9 +86,9 @@ export function sanitizeUrl(url: string): string {
     return u.toString();
   } catch {
     // Fallback if URL parsing fails (e.g. relative URLs)
-    let out = url;
     for (const key of SENSITIVE_KEYS) {
-      const regex = new RegExp(`([?&]${key}=)[^&]*`, "gi");
+      // stops at both & and # boundaries
+      const regex = new RegExp(`([?&#]${key}=)[^&#]*`, "gi");
       out = out.replace(regex, "$1[redacted]");
     }
     return out.replace(/\/bot[^/?#\s]+/, "/bot[redacted]");

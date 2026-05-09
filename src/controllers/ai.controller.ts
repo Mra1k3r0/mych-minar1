@@ -46,6 +46,18 @@ import {
 
 @Controller()
 export class AiController {
+  private static readonly COMMAND_GROUP_RE = /(category|group|by categ|by category|categor)/i;
+  private static readonly CODE_GEN_RE =
+    /\b(code|snippet|program|script|function|class|algorithm|calculator|calc)\b/i;
+  private static readonly CODE_LANG_RE =
+    /\b(lua|java|python|javascript|typescript|c\+\+|cpp|c#|go|rust|php|swift|kotlin)\b/i;
+  private static readonly MEDIA_REQ_RE = /\b(play|video)\b/i;
+  private static readonly SOCIAL_REQ_RE =
+    /\b(cat|dog|neko|hug|kiss|pat|cuddle|slap|meme|vtuber)\b/i;
+  private static readonly ACTION_VERB_RE = /\b(send|give|show|fetch|make|run|do)\b/i;
+  private static readonly POLITE_RE = /\b(please|pls|can you|could you)\b/i;
+  private static readonly QUESTION_RE = /\b(what|how|why|explain)\b/i;
+
   private pendingIntent = new Map<number, { command: string; baseArgs?: string }>();
   private lastAutoAction = new Map<number, { command: string; args: string; ts: number }>();
   private readonly autoExecutableCommands = getAutoExecutableCommands();
@@ -159,7 +171,7 @@ export class AiController {
       return false;
     }
     const preferredGroup = detectCommandGroupPreference(lower);
-    const wantsGrouped = /(category|group|by categ|by category|categor)/.test(lower);
+    const wantsGrouped = AiController.COMMAND_GROUP_RE.test(lower);
     const grouped = renderCommandCatalog(wantsGrouped || Boolean(preferredGroup), preferredGroup);
     const fallbackHeader = localCommandListHeader(gram);
     if (this.isLlmBudgetTight()) {
@@ -298,12 +310,7 @@ export class AiController {
 
   private isCodeGenerationRequest(text: string): boolean {
     const lower = this.localPromptize(text);
-    return (
-      /\b(code|snippet|program|script|function|class|algorithm|calculator|calc)\b/.test(lower) &&
-      /\b(lua|java|python|javascript|typescript|c\+\+|cpp|c#|go|rust|php|swift|kotlin)\b/.test(
-        lower,
-      )
-    );
+    return AiController.CODE_GEN_RE.test(lower) && AiController.CODE_LANG_RE.test(lower);
   }
 
   private responseMaxTokens(userText: string): number | undefined {
@@ -560,12 +567,11 @@ export class AiController {
     const normalized = this.localPromptize(text);
     const tags: string[] = [];
     if (this.isCommandListQuery(text)) tags.push("capability_query");
-    if (/\b(play|video)\b/.test(normalized)) tags.push("media_request");
-    if (/\b(cat|dog|neko|hug|kiss|pat|cuddle|slap|meme|vtuber)\b/.test(normalized))
-      tags.push("image_or_reaction_request");
-    if (/\b(send|give|show|fetch|make|run|do)\b/.test(normalized)) tags.push("action_verb");
-    if (/\b(please|pls|can you|could you)\b/.test(normalized)) tags.push("polite");
-    if (/\b(what|how|why|explain)\b/.test(normalized)) tags.push("question");
+    if (AiController.MEDIA_REQ_RE.test(normalized)) tags.push("media_request");
+    if (AiController.SOCIAL_REQ_RE.test(normalized)) tags.push("image_or_reaction_request");
+    if (AiController.ACTION_VERB_RE.test(normalized)) tags.push("action_verb");
+    if (AiController.POLITE_RE.test(normalized)) tags.push("polite");
+    if (AiController.QUESTION_RE.test(normalized)) tags.push("question");
     if (normalized.length <= 20) tags.push("short_input");
 
     return [

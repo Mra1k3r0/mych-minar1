@@ -106,3 +106,30 @@ void test("sanitizeUrl should use exact key matching for parameters", () => {
     "Should mask exact 'key' parameter",
   );
 });
+
+void test("sanitizeUrl should mask Basic Auth credentials", () => {
+  const url = "https://user:password@api.example.com/data";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(
+    sanitized.includes("[redacted]:[redacted]@") || sanitized.includes("%5Bredacted%5D:%5Bredacted%5D@"),
+    `Failed to mask Basic Auth in ${url}: ${sanitized}`,
+  );
+});
+
+void test("sanitizeUrl should mask sensitive keys in fragments", () => {
+  const url = "https://example.com/#/dashboard?token=secret123";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(
+    sanitized.includes("token=[redacted]") || sanitized.includes("token=%5Bredacted%5D"),
+    `Failed to mask token in fragment in ${url}: ${sanitized}`,
+  );
+});
+
+void test("sanitizeUrl fallback should handle Basic Auth and stop at #", () => {
+  // We use an invalid URL to trigger fallback or just test the fallback logic
+  const notAUrl = "user:password@/path?key=secret#section";
+  const sanitized = sanitizeUrl(notAUrl);
+  assert.ok(sanitized.includes("[redacted]:[redacted]@"), "Should mask Basic Auth in fallback");
+  assert.ok(sanitized.includes("key=[redacted]"), "Should mask key in fallback");
+  assert.ok(sanitized.endsWith("#section"), "Should stop masking at # boundary");
+});

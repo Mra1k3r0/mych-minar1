@@ -1,0 +1,3 @@
+## 2025-05-15 - [intent parsing optimization]
+learning: nested loops and repeated regex evaluations in `findKeywordCommand` create an O(N*M) bottleneck where N is the number of commands and M is the number of patterns per command. consolidating patterns into a single regex with alternation reduces evaluations to O(N). furthermore, O(N) linear scans in `parseCommandIntent` for aliases can be replaced with O(1) lookups using a pre-computed alias index.
+action: always consolidate keyword/alias patterns into a single merged `RegExp` per group/command using alternation (|) and sort by length descending to prevent incorrect prefix matches. use pre-computed indices for O(1) resolution of aliases in hot paths.

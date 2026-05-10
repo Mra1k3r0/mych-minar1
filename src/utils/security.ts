@@ -56,6 +56,10 @@ export function sanitizeUrl(url: string): string {
   try {
     const u = new URL(url);
 
+    // Redact basic auth credentials
+    if (u.username) u.username = "[redacted]";
+    if (u.password) u.password = "[redacted]";
+
     // Mask sensitive query params
     for (const key of Array.from(u.searchParams.keys())) {
       if (SENSITIVE_KEYS.includes(key.toLowerCase())) {

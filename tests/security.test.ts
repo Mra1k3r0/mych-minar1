@@ -106,3 +106,21 @@ void test("sanitizeUrl should use exact key matching for parameters", () => {
     "Should mask exact 'key' parameter",
   );
 });
+
+void test("sanitizeUrl should redact Basic Auth credentials", () => {
+  const url = "https://user:password@example.com/api?key=123";
+  const sanitized = sanitizeUrl(url);
+  const hasRedacted = sanitized.includes("[redacted]") || sanitized.includes("%5Bredacted%5D");
+  assert.strictEqual(hasRedacted, true, "Should contain redacted placeholder");
+  assert.strictEqual(sanitized.includes("user"), false, "Username should be redacted");
+  assert.strictEqual(sanitized.includes("password"), false, "Password should be redacted");
+});
+
+void test("sanitizeUrl should redact Basic Auth in fallback path", () => {
+  // Protocol-relative URL with authority might trigger fallback in some environments or if malformed
+  const authorityOnly = "//user:password@example.com/api";
+  const sanitized = sanitizeUrl(authorityOnly);
+  assert.ok(sanitized.includes("[redacted]"), "Should mask credentials in fallback");
+  assert.ok(!sanitized.includes("user"), "Username should be removed in fallback");
+  assert.ok(!sanitized.includes("password"), "Password should be removed in fallback");
+});

@@ -30,22 +30,25 @@ const COMMAND_KEYWORD_INDEX = Object.freeze(
         ...(meta.matchCommandName ? [command] : []),
         ...meta.aliases,
         ...meta.keywords,
-      ];
+      ].filter((t) => t.trim().length > 0);
+
+      if (tokens.length === 0) return null;
+
+      // merge into single regex per command to reduce .test() calls
+      // sort by length desc to prevent shorter tokens from matching inside larger ones if needed
+      const patterns = [...tokens]
+        .sort((a, b) => b.length - a.length)
+        .map((t) => {
+          const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          return t.includes(" ") ? `(?:^|\\b)${escaped}(?:\\b|$)` : `\\b${escaped}\\b`;
+        });
+
       return {
         command,
-        patterns: Object.freeze(
-          tokens
-            .filter((t) => t.trim().length > 0)
-            .map((t) => {
-              const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              return t.includes(" ")
-                ? new RegExp(`(?:^|\\b)${escaped}(?:\\b|$)`, "i")
-                : new RegExp(`\\b${escaped}\\b`, "i");
-            }),
-        ),
+        mergedPattern: new RegExp(patterns.join("|"), "i"),
       };
     })
-    .filter((row): row is { command: string; patterns: readonly RegExp[] } => row !== null),
+    .filter((row): row is { command: string; mergedPattern: RegExp } => row !== null),
 );
 
 const COMMAND_ALIAS_INDEX = Object.freeze(
@@ -98,10 +101,10 @@ export function isCommandListQuery(text: string): boolean {
 }
 
 export function findKeywordCommand(text: string): string | null {
-  for (const entry of COMMAND_KEYWORD_INDEX) {
-    for (const pattern of entry.patterns) {
-      if (pattern.test(text)) return entry.command;
-    }
+  // use simple loop for maximum performance in hot path
+  for (let i = 0; i < COMMAND_KEYWORD_INDEX.length; i++) {
+    const entry = COMMAND_KEYWORD_INDEX[i];
+    if (entry.mergedPattern.test(text)) return entry.command;
   }
   return null;
 }
@@ -125,9 +128,8 @@ export function parseCommandIntent(text: string): { command: string; args: strin
   const direct = raw.match(/^(?:please\s+)?([a-z0-9_]+)(?:\s+([\s\S]+))?$/i);
   if (direct?.[1]) {
     const probe = direct[1].toLowerCase();
-    const mapped = Object.keys(COMMAND_INTENT_META).find(
-      (name) => name === probe || metaForCommand(name).aliases.includes(probe),
-    );
+    // performance optimization: O(1) lookup instead of O(N) loop over keys
+    const mapped = COMMAND_INTENT_META[probe] ? probe : COMMAND_ALIAS_INDEX[probe];
     if (mapped)
       return { command: mapped, args: typeof direct[2] === "string" ? direct[2].trim() : "" };
   }

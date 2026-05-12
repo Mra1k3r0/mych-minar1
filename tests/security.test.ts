@@ -106,3 +106,15 @@ void test("sanitizeUrl should use exact key matching for parameters", () => {
     "Should mask exact 'key' parameter",
   );
 });
+
+void test("sanitizeUrl should mask Basic Auth credentials", () => {
+  const url = "https://user:pass@api.example.com/v1/data?key=secret";
+  const sanitized = sanitizeUrl(url);
+  // Node.js URL implementation encodes [ and ] as %5B and %5D
+  assert.ok(
+    sanitized.includes("[redacted]:[redacted]@") ||
+      sanitized.includes("%5Bredacted%5D:%5Bredacted%5D@"),
+    "Should mask Basic Auth credentials",
+  );
+  assert.ok(!sanitized.includes("user:pass"), "Should remove user:pass from URL");
+});

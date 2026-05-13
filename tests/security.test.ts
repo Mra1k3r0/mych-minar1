@@ -90,6 +90,16 @@ void test("sanitizeUrl should preserve non-sensitive parameters", () => {
   );
 });
 
+void test("sanitizeUrl should mask basic auth credentials", () => {
+  const url = "https://user:password123@api.example.com/data";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(
+    sanitized.includes("[redacted]:[redacted]@") || sanitized.includes("%5Bredacted%5D:%5Bredacted%5D@"),
+    "Should mask credentials in authority",
+  );
+  assert.ok(!sanitized.includes("password123"), "Should not contain raw password");
+});
+
 void test("sanitizeUrl should handle relative or non-parseable URLs", () => {
   const relative = "/bot123:abc/sendMessage?api_key=secret";
   const sanitized = sanitizeUrl(relative);

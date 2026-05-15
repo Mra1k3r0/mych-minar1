@@ -106,3 +106,23 @@ void test("sanitizeUrl should use exact key matching for parameters", () => {
     "Should mask exact 'key' parameter",
   );
 });
+
+void test("sanitizeUrl should mask credentials in authority", () => {
+  const urls = [
+    "https://user:password@example.com",
+    "http://admin:secret123@localhost:3000/api",
+  ];
+
+  for (const url of urls) {
+    const sanitized = sanitizeUrl(url);
+    assert.ok(
+      sanitized.includes("[redacted]:[redacted]") ||
+        sanitized.includes("%5Bredacted%5D:%5Bredacted%5D"),
+      `Failed to mask authority in ${url}`,
+    );
+    assert.ok(
+      !sanitized.includes("password") && !sanitized.includes("secret123"),
+      `Failed to remove secret from authority in ${url}`,
+    );
+  }
+});

@@ -56,6 +56,10 @@ export function sanitizeUrl(url: string): string {
   try {
     const u = new URL(url);
 
+    // Mask credentials in authority
+    if (u.username) u.username = "[redacted]";
+    if (u.password) u.password = "[redacted]";
+
     // Mask sensitive query params
     for (const key of Array.from(u.searchParams.keys())) {
       if (SENSITIVE_KEYS.includes(key.toLowerCase())) {
@@ -71,7 +75,11 @@ export function sanitizeUrl(url: string): string {
     return u.toString();
   } catch {
     // Fallback if URL parsing fails (e.g. relative URLs)
-    let out = url;
+    let out = url.replace(/^(?:\w+:)?\/\/([^/]+@)/, (match: string, authority: string): string => {
+      const atIndex = authority.lastIndexOf("@");
+      if (atIndex === -1) return match;
+      return match.replace(authority.slice(0, atIndex), "[redacted]:[redacted]");
+    });
     for (const key of SENSITIVE_KEYS) {
       const regex = new RegExp(`([?&]${key}=)[^&]*`, "gi");
       out = out.replace(regex, "$1[redacted]");

@@ -90,6 +90,32 @@ void test("sanitizeUrl should preserve non-sensitive parameters", () => {
   );
 });
 
+void test("sanitizeUrl should mask basic auth credentials", () => {
+  const cases = [
+    {
+      url: "https://user:password@example.com/api/v1",
+      expect: ["%5Bredacted%5D:%5Bredacted%5D", "[redacted]:[redacted]"],
+    },
+    {
+      url: "http://admin@127.0.0.1:8080/debug",
+      expect: ["%5Bredacted%5D@", "[redacted]@"],
+    },
+    {
+      url: "//secret:token@internal.service/status",
+      expect: ["//[redacted]:[redacted]@", "//%5Bredacted%5D:%5Bredacted%5D@"],
+    },
+  ];
+
+  for (const c of cases) {
+    const sanitized = sanitizeUrl(c.url);
+    const found = c.expect.some((e) => sanitized.includes(e));
+    assert.ok(found, `Failed to mask basic auth in ${c.url}: ${sanitized}`);
+    assert.ok(!sanitized.includes("user:password"), `Failed to remove user:password from ${c.url}`);
+    assert.ok(!sanitized.includes("admin@"), `Failed to remove admin@ from ${c.url}`);
+    assert.ok(!sanitized.includes("secret:token"), `Failed to remove secret:token from ${c.url}`);
+  }
+});
+
 void test("sanitizeUrl should handle relative or non-parseable URLs", () => {
   const relative = "/bot123:abc/sendMessage?api_key=secret";
   const sanitized = sanitizeUrl(relative);

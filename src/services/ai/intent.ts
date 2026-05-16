@@ -30,22 +30,21 @@ const COMMAND_KEYWORD_INDEX = Object.freeze(
         ...(meta.matchCommandName ? [command] : []),
         ...meta.aliases,
         ...meta.keywords,
-      ];
+      ]
+        .filter((t) => t.trim().length > 0)
+        .sort((a, b) => b.length - a.length);
+
+      if (tokens.length === 0) return null;
+
+      const patternStr = tokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+
+      // optimization: consolidate tokens into a single regex per command to reduce .test() calls
       return {
         command,
-        patterns: Object.freeze(
-          tokens
-            .filter((t) => t.trim().length > 0)
-            .map((t) => {
-              const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              return t.includes(" ")
-                ? new RegExp(`(?:^|\\b)${escaped}(?:\\b|$)`, "i")
-                : new RegExp(`\\b${escaped}\\b`, "i");
-            }),
-        ),
+        pattern: new RegExp(`(?:^|\\b)(?:${patternStr})(?:\\b|$)`, "i"),
       };
     })
-    .filter((row): row is { command: string; patterns: readonly RegExp[] } => row !== null),
+    .filter((row): row is { command: string; pattern: RegExp } => row !== null),
 );
 
 const COMMAND_ALIAS_INDEX = Object.freeze(
@@ -98,10 +97,9 @@ export function isCommandListQuery(text: string): boolean {
 }
 
 export function findKeywordCommand(text: string): string | null {
+  // optimization: use consolidated regex for O(Commands) instead of O(TotalTokens)
   for (const entry of COMMAND_KEYWORD_INDEX) {
-    for (const pattern of entry.patterns) {
-      if (pattern.test(text)) return entry.command;
-    }
+    if (entry.pattern.test(text)) return entry.command;
   }
   return null;
 }
@@ -125,9 +123,10 @@ export function parseCommandIntent(text: string): { command: string; args: strin
   const direct = raw.match(/^(?:please\s+)?([a-z0-9_]+)(?:\s+([\s\S]+))?$/i);
   if (direct?.[1]) {
     const probe = direct[1].toLowerCase();
-    const mapped = Object.keys(COMMAND_INTENT_META).find(
-      (name) => name === probe || metaForCommand(name).aliases.includes(probe),
-    );
+    // optimization: O(1) lookup instead of O(N) .find loop
+    const mapped = Object.prototype.hasOwnProperty.call(COMMAND_INTENT_META, probe)
+      ? probe
+      : resolveAliasTarget(probe);
     if (mapped)
       return { command: mapped, args: typeof direct[2] === "string" ? direct[2].trim() : "" };
   }

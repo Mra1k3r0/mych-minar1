@@ -80,6 +80,17 @@ void test("sanitizeUrl should mask Telegram bot tokens", () => {
   assert.ok(!sanitized.includes("123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"), "Failed to remove token");
 });
 
+void test("sanitizeUrl should mask Basic Auth credentials", () => {
+  const url = "https://user:password@example.com/api";
+  const sanitized = sanitizeUrl(url);
+  assert.ok(
+    sanitized.includes("[redacted]:[redacted]") || sanitized.includes("%5Bredacted%5D:%5Bredacted%5D"),
+    "Should mask both username and password",
+  );
+  assert.ok(!sanitized.includes("user"), "Should remove username");
+  assert.ok(!sanitized.includes("password"), "Should remove password");
+});
+
 void test("sanitizeUrl should preserve non-sensitive parameters", () => {
   const url = "https://api.example.com/data?query=hello&api_key=secret";
   const sanitized = sanitizeUrl(url);

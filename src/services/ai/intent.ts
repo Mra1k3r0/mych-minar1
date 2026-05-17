@@ -5,9 +5,34 @@ import { getCommandIntentData } from "../command/store.js";
 const COMMAND_LIST_QUERY_RE =
   /(what commands|available commands|command list|list commands|help commands|show commands|feature list|features|what can you do|what can u do|what else can you do|what else u can do|what you can do|capabilities|list of commands|your commands|full command)/;
 
+const FIRST_PERSON_SOCIAL_RE =
+  /^(?:can|could|may|should)\s+i\s+(?:get|have|do|give|send|use|try\s+)?(kiss|hug|pat|cuddle|slap)\b/;
+const SLASH_COMMAND_RE = /^\/([a-z0-9_]+)(?:\s+([\s\S]+))?$/i;
+const DIRECT_COMMAND_RE = /^(?:please\s+)?([a-z0-9_]+)(?:\s+([\s\S]+))?$/i;
+const ACTION_VERB_RE =
+  /\b(send|give|show|fetch|drop|make|want|need|do|pls|please|can you|could you)\b/;
+const PLAY_LIKE_RE = /\b(play|video)\s+(.+)/i;
+const MUSIC_INTENT_RE =
+  /\b(song|songs|music|audio|cover|acoustic|ukulele|bgm|karaoke|playlist|listen)\b/;
+const VIDEO_INTENT_RE = /\b(video|mv|clip|watch)\b/;
+const VTUBER_NAME_RE = /\b(gawr\s+gura|gura|pekora|korone|mumei|fubuki|ayame|marine|amelia)\b/;
+const WANT_INTENT_RE = /\bi\s+want\b/;
+const REACTION_COMMANDS = new Set([
+  "cat",
+  "dog",
+  "neko",
+  "hug",
+  "kiss",
+  "pat",
+  "cuddle",
+  "slap",
+  "meme",
+  "vtuber",
+]);
+
 function buildCommandIntentMeta() {
   const raw = normalizeCommandIntentMap(getCommandIntentData());
-  const out: Partial<Record<string, (typeof raw)[string]>> = {};
+  const out: Record<string, (typeof raw)[string]> = {};
   for (const [name, meta] of Object.entries(raw)) {
     const fromRegistry = commandRegistry.get(name);
     out[name] = {
@@ -30,26 +55,29 @@ const COMMAND_KEYWORD_INDEX = Object.freeze(
         ...(meta.matchCommandName ? [command] : []),
         ...meta.aliases,
         ...meta.keywords,
-      ];
+      ]
+        .filter((t) => t.trim().length > 0)
+        .sort((a, b) => b.length - a.length);
+
+      if (tokens.length === 0) return null;
+
+      const patternSource = tokens
+        .map((t) => {
+          const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          return t.includes(" ") ? `(?:^|\\b)${escaped}(?:\\b|$)` : `\\b${escaped}\\b`;
+        })
+        .join("|");
+
       return {
         command,
-        patterns: Object.freeze(
-          tokens
-            .filter((t) => t.trim().length > 0)
-            .map((t) => {
-              const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              return t.includes(" ")
-                ? new RegExp(`(?:^|\\b)${escaped}(?:\\b|$)`, "i")
-                : new RegExp(`\\b${escaped}\\b`, "i");
-            }),
-        ),
+        pattern: new RegExp(patternSource, "i"),
       };
     })
-    .filter((row): row is { command: string; patterns: readonly RegExp[] } => row !== null),
+    .filter((row): row is { command: string; pattern: RegExp } => row !== null),
 );
 
-const COMMAND_ALIAS_INDEX = Object.freeze(
-  Object.entries(COMMAND_INTENT_META).reduce<Record<string, string>>((acc, [command, meta]) => {
+const COMMAND_ALIAS_INDEX: Record<string, string> = Object.freeze(
+  Object.entries(COMMAND_INTENT_META).reduce((acc: Record<string, string>, [command, meta]) => {
     if (!meta) return acc;
     for (const alias of meta.aliases) {
       const key = alias.trim().toLowerCase();
@@ -99,9 +127,7 @@ export function isCommandListQuery(text: string): boolean {
 
 export function findKeywordCommand(text: string): string | null {
   for (const entry of COMMAND_KEYWORD_INDEX) {
-    for (const pattern of entry.patterns) {
-      if (pattern.test(text)) return entry.command;
-    }
+    if (entry.pattern.test(text)) return entry.command;
   }
   return null;
 }
@@ -109,12 +135,9 @@ export function findKeywordCommand(text: string): string | null {
 export function parseCommandIntent(text: string): { command: string; args: string } | null {
   const raw = text.trim();
   const lower = raw.toLowerCase();
-  const firstPersonSocialQuery =
-    /^(?:can|could|may|should)\s+i\s+(?:get|have|do|give|send|use|try\s+)?(kiss|hug|pat|cuddle|slap)\b/.test(
-      lower,
-    ) && /\byou\b/.test(lower);
+  const firstPersonSocialQuery = FIRST_PERSON_SOCIAL_RE.test(lower) && /\byou\b/.test(lower);
   if (firstPersonSocialQuery) return null;
-  const slash = raw.match(/^\/([a-z0-9_]+)(?:\s+([\s\S]+))?$/i);
+  const slash = raw.match(SLASH_COMMAND_RE);
   if (slash?.[1]) {
     const name = slash[1].toLowerCase();
     if (commandRegistry.get(name))
@@ -122,43 +145,32 @@ export function parseCommandIntent(text: string): { command: string; args: strin
     return null;
   }
 
-  const direct = raw.match(/^(?:please\s+)?([a-z0-9_]+)(?:\s+([\s\S]+))?$/i);
+  const direct = raw.match(DIRECT_COMMAND_RE);
   if (direct?.[1]) {
     const probe = direct[1].toLowerCase();
-    const mapped = Object.keys(COMMAND_INTENT_META).find(
-      (name) => name === probe || metaForCommand(name).aliases.includes(probe),
-    );
+    const mapped = Object.prototype.hasOwnProperty.call(COMMAND_INTENT_META, probe)
+      ? probe
+      : resolveAliasTarget(probe);
     if (mapped)
       return { command: mapped, args: typeof direct[2] === "string" ? direct[2].trim() : "" };
   }
 
-  const actionish =
-    /\b(send|give|show|fetch|drop|make|want|need|do|pls|please|can you|could you)\b/.test(lower);
+  const actionish = ACTION_VERB_RE.test(lower);
   const matchedKeyword = findKeywordCommand(lower);
   const wantsReaction =
-    matchedKeyword &&
-    new Set(["cat", "dog", "neko", "hug", "kiss", "pat", "cuddle", "slap", "meme", "vtuber"]).has(
-      matchedKeyword,
-    )
-      ? matchedKeyword
-      : null;
-  const asksForAction =
-    /\b(send|give|show|fetch|drop|want|need|do|pls|please|can you|could you)\b/.test(lower);
-  if (wantsReaction && asksForAction) {
+    matchedKeyword && REACTION_COMMANDS.has(matchedKeyword) ? matchedKeyword : null;
+  if (wantsReaction && actionish) {
     return { command: wantsReaction, args: "" };
   }
 
-  const playLike = raw.match(/\b(play|video)\s+(.+)/i);
+  const playLike = raw.match(PLAY_LIKE_RE);
   if (playLike && playLike[1] && playLike[2]) {
     return { command: playLike[1].toLowerCase(), args: playLike[2].trim() };
   }
 
-  const hasMusicIntent =
-    /\b(song|songs|music|audio|cover|acoustic|ukulele|bgm|karaoke|playlist|listen)\b/.test(lower) ||
-    /\bi\s+want\b/.test(lower);
-  const hasVideoIntent = /\b(video|mv|clip|watch)\b/.test(lower);
-  const hasVtuberName =
-    /\b(gawr\s+gura|gura|pekora|korone|mumei|fubuki|ayame|marine|amelia)\b/.test(lower);
+  const hasMusicIntent = MUSIC_INTENT_RE.test(lower) || WANT_INTENT_RE.test(lower);
+  const hasVideoIntent = VIDEO_INTENT_RE.test(lower);
+  const hasVtuberName = VTUBER_NAME_RE.test(lower);
   if (hasMusicIntent && hasVtuberName) {
     return { command: "play", args: raw };
   }

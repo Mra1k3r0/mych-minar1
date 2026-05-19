@@ -1,0 +1,3 @@
+## 2026-05-19 - Regex consolidation and O(1) command lookup
+learning: Consolidating multiple command keyword/alias patterns into a single merged `RegExp` per command using alternation (`|`) reduces the number of `.test()` calls in the intent resolution hot path. Additionally, replacing O(N) `Object.keys().find()` loops with O(1) lookups using pre-computed `COMMAND_INTENT_META` and `resolveAliasTarget` (via `COMMAND_ALIAS_INDEX`) provides significant latency reductions.
+action: Prioritize regex hoisting, consolidation, and Map/Object lookups in any high-traffic string parsing or intent routing logic.

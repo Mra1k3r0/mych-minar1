@@ -30,22 +30,25 @@ const COMMAND_KEYWORD_INDEX = Object.freeze(
         ...(meta.matchCommandName ? [command] : []),
         ...meta.aliases,
         ...meta.keywords,
-      ];
+      ]
+        .filter((t) => t.trim().length > 0)
+        .sort((a, b) => b.length - a.length);
+
+      if (tokens.length === 0) return null;
+
+      const patternStr = tokens
+        .map((t) => {
+          const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          return t.includes(" ") ? `(?:^|\\b)${escaped}(?:\\b|$)` : `\\b${escaped}\\b`;
+        })
+        .join("|");
+
       return {
         command,
-        patterns: Object.freeze(
-          tokens
-            .filter((t) => t.trim().length > 0)
-            .map((t) => {
-              const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              return t.includes(" ")
-                ? new RegExp(`(?:^|\\b)${escaped}(?:\\b|$)`, "i")
-                : new RegExp(`\\b${escaped}\\b`, "i");
-            }),
-        ),
+        pattern: new RegExp(patternStr, "i"),
       };
     })
-    .filter((row): row is { command: string; patterns: readonly RegExp[] } => row !== null),
+    .filter((row): row is { command: string; pattern: RegExp } => row !== null),
 );
 
 const COMMAND_ALIAS_INDEX = Object.freeze(
@@ -99,22 +102,42 @@ export function isCommandListQuery(text: string): boolean {
 
 export function findKeywordCommand(text: string): string | null {
   for (const entry of COMMAND_KEYWORD_INDEX) {
-    for (const pattern of entry.patterns) {
-      if (pattern.test(text)) return entry.command;
-    }
+    if (entry.pattern.test(text)) return entry.command;
   }
   return null;
 }
 
+const SOCIAL_QUERY_RE =
+  /^(?:can|could|may|should)\s+i\s+(?:get|have|do|give|send|use|try\s+)?(kiss|hug|pat|cuddle|slap)\b/i;
+const SLASH_COMMAND_RE = /^\/([a-z0-9_]+)(?:\s+([\s\S]+))?$/i;
+const DIRECT_COMMAND_RE = /^(?:please\s+)?([a-z0-9_]+)(?:\s+([\s\S]+))?$/i;
+const ACTION_KEYWORDS_RE =
+  /\b(send|give|show|fetch|drop|make|want|need|do|pls|please|can you|could you)\b/i;
+const REACTION_COMMANDS = new Set([
+  "cat",
+  "dog",
+  "neko",
+  "hug",
+  "kiss",
+  "pat",
+  "cuddle",
+  "slap",
+  "meme",
+  "vtuber",
+]);
+const PLAY_VIDEO_RE = /\b(play|video)\s+(.+)/i;
+const MUSIC_INTENT_RE =
+  /\b(song|songs|music|audio|cover|acoustic|ukulele|bgm|karaoke|playlist|listen)\b/i;
+const VIDEO_INTENT_RE = /\b(video|mv|clip|watch)\b/i;
+const VTUBER_NAME_RE = /\b(gawr\s+gura|gura|pekora|korone|mumei|fubuki|ayame|marine|amelia)\b/i;
+
 export function parseCommandIntent(text: string): { command: string; args: string } | null {
   const raw = text.trim();
   const lower = raw.toLowerCase();
-  const firstPersonSocialQuery =
-    /^(?:can|could|may|should)\s+i\s+(?:get|have|do|give|send|use|try\s+)?(kiss|hug|pat|cuddle|slap)\b/.test(
-      lower,
-    ) && /\byou\b/.test(lower);
-  if (firstPersonSocialQuery) return null;
-  const slash = raw.match(/^\/([a-z0-9_]+)(?:\s+([\s\S]+))?$/i);
+
+  if (SOCIAL_QUERY_RE.test(lower) && /\byou\b/.test(lower)) return null;
+
+  const slash = raw.match(SLASH_COMMAND_RE);
   if (slash?.[1]) {
     const name = slash[1].toLowerCase();
     if (commandRegistry.get(name))
@@ -122,51 +145,38 @@ export function parseCommandIntent(text: string): { command: string; args: strin
     return null;
   }
 
-  const direct = raw.match(/^(?:please\s+)?([a-z0-9_]+)(?:\s+([\s\S]+))?$/i);
+  const direct = raw.match(DIRECT_COMMAND_RE);
   if (direct?.[1]) {
     const probe = direct[1].toLowerCase();
-    const mapped = Object.keys(COMMAND_INTENT_META).find(
-      (name) => name === probe || metaForCommand(name).aliases.includes(probe),
-    );
-    if (mapped)
-      return { command: mapped, args: typeof direct[2] === "string" ? direct[2].trim() : "" };
+    const target = COMMAND_INTENT_META[probe] ? probe : resolveAliasTarget(probe);
+    if (target) {
+      return { command: target, args: typeof direct[2] === "string" ? direct[2].trim() : "" };
+    }
   }
 
-  const actionish =
-    /\b(send|give|show|fetch|drop|make|want|need|do|pls|please|can you|could you)\b/.test(lower);
+  const hasActionKeyword = ACTION_KEYWORDS_RE.test(lower);
   const matchedKeyword = findKeywordCommand(lower);
-  const wantsReaction =
-    matchedKeyword &&
-    new Set(["cat", "dog", "neko", "hug", "kiss", "pat", "cuddle", "slap", "meme", "vtuber"]).has(
-      matchedKeyword,
-    )
-      ? matchedKeyword
-      : null;
-  const asksForAction =
-    /\b(send|give|show|fetch|drop|want|need|do|pls|please|can you|could you)\b/.test(lower);
-  if (wantsReaction && asksForAction) {
-    return { command: wantsReaction, args: "" };
+
+  if (matchedKeyword && hasActionKeyword && REACTION_COMMANDS.has(matchedKeyword)) {
+    return { command: matchedKeyword, args: "" };
   }
 
-  const playLike = raw.match(/\b(play|video)\s+(.+)/i);
+  const playLike = raw.match(PLAY_VIDEO_RE);
   if (playLike && playLike[1] && playLike[2]) {
     return { command: playLike[1].toLowerCase(), args: playLike[2].trim() };
   }
 
-  const hasMusicIntent =
-    /\b(song|songs|music|audio|cover|acoustic|ukulele|bgm|karaoke|playlist|listen)\b/.test(lower) ||
-    /\bi\s+want\b/.test(lower);
-  const hasVideoIntent = /\b(video|mv|clip|watch)\b/.test(lower);
-  const hasVtuberName =
-    /\b(gawr\s+gura|gura|pekora|korone|mumei|fubuki|ayame|marine|amelia)\b/.test(lower);
-  if (hasMusicIntent && hasVtuberName) {
-    return { command: "play", args: raw };
-  }
-  if (hasVideoIntent && hasVtuberName) {
-    return { command: "video", args: raw };
+  const hasVtuberName = VTUBER_NAME_RE.test(lower);
+  if (hasVtuberName) {
+    if (MUSIC_INTENT_RE.test(lower) || /\bi\s+want\b/.test(lower)) {
+      return { command: "play", args: raw };
+    }
+    if (VIDEO_INTENT_RE.test(lower)) {
+      return { command: "video", args: raw };
+    }
   }
 
-  if (actionish && matchedKeyword) {
+  if (hasActionKeyword && matchedKeyword) {
     return { command: matchedKeyword, args: "" };
   }
 

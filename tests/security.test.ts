@@ -73,6 +73,18 @@ void test("sanitizeUrl should mask sensitive query parameters", () => {
   }
 });
 
+void test("sanitizeUrl should mask Basic Auth credentials", () => {
+  const url = "https://user:password123@api.example.com/data";
+  const sanitized = sanitizeUrl(url);
+  // URL API encodes brackets in authority as %5B and %5D
+  assert.ok(
+    sanitized.includes("[redacted]:[redacted]") || sanitized.includes("%5Bredacted%5D:%5Bredacted%5D"),
+    `Failed to mask Basic Auth in ${url}`,
+  );
+  assert.ok(!sanitized.includes("user:"), "Failed to remove username");
+  assert.ok(!sanitized.includes(":password123"), "Failed to remove password");
+});
+
 void test("sanitizeUrl should mask Telegram bot tokens", () => {
   const url = "https://api.telegram.org/bot123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11/sendMessage";
   const sanitized = sanitizeUrl(url);

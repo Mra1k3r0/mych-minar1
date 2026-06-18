@@ -56,6 +56,10 @@ export function sanitizeUrl(url: string): string {
   try {
     const u = new URL(url);
 
+    // Mask Basic Auth
+    if (u.username) u.username = "[redacted]";
+    if (u.password) u.password = "[redacted]";
+
     // Mask sensitive query params
     for (const key of Array.from(u.searchParams.keys())) {
       if (SENSITIVE_KEYS.includes(key.toLowerCase())) {
@@ -76,6 +80,12 @@ export function sanitizeUrl(url: string): string {
       const regex = new RegExp(`([?&]${key}=)[^&]*`, "gi");
       out = out.replace(regex, "$1[redacted]");
     }
+
+    // Mask authority credentials (user:pass@)
+    out = out.replace(/^(?:\w+:)?\/\/([^/]+@)/, (match: string, authority: string) => {
+      return match.replace(authority, "[redacted]:[redacted]@");
+    });
+
     return out.replace(/\/bot[^/?#\s]+/, "/bot[redacted]");
   }
 }

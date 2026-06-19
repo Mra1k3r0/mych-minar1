@@ -46,6 +46,35 @@ import {
 
 @Controller()
 export class AiController {
+  // static regexes hoisted to class level to avoid redundant allocations/recompilations
+  private static readonly CODE_GEN_RE =
+    /\b(code|snippet|program|script|function|class|algorithm|calculator|calc)\b/i;
+  private static readonly LANG_RE =
+    /\b(lua|java|python|javascript|typescript|c\+\+|cpp|c#|go|rust|php|swift|kotlin)\b/i;
+  private static readonly GROUPED_CATALOG_RE = /(category|group|by categ|by category|categor)/i;
+  private static readonly WHO_ARE_YOU_RE =
+    /(^|\b)(who are you|who r you|who u|about you|what are you)\b/i;
+  private static readonly WHO_AM_I_RE =
+    /(^|\b)(who am i|my username|what is my username|username\??)\b/i;
+  private static readonly MY_ID_RE = /(^|\b)(my id|user id|what is my id)\b/i;
+  private static readonly CHAT_ID_RE = /(^|\b)(chat id|group id|this chat id)\b/i;
+  private static readonly ASKS_NAME_RE = /^(who am i|what(?:'s| is)? my name\??|my name\??)$/i;
+  private static readonly ASKS_NAME_ALT_RE = /\b(what(?:'s| is)\s+my\s+name)\b/i;
+  private static readonly NAME_EDIT_RE = /\b(change|rename|set|edit|update)\s+my\s+name\b/i;
+  private static readonly CALC_EXPLICIT_RE = /^\s*(?:calc|calculate|math)\s+(.+)\s*$/i;
+  private static readonly CALC_SHORT_RE = /^\s*=\s*(.+)\s*$/;
+  private static readonly EXPLICIT_CMD_RE = /(?:^|\s)\/([a-z0-9_]+)/i;
+  private static readonly HEAVY_INTENT_RE =
+    /\b(play|video|cat|dog|meme|hug|kiss|pat|cuddle|slap|neko|roll|choose|rps|8ball|vtuber|status|stats|help|id|ping|uptime)\b/i;
+  private static readonly ACTIONISH_RE =
+    /\b(send|give|show|fetch|play|video|make|do|run|use|please|pls|can you|could you|i want|i need|help me)\b/i;
+  private static readonly VTUBER_RE =
+    /\b(vtuber|gura|pekora|korone|mumei|fubuki|botan|marine|random)\b/i;
+  private static readonly AGAIN_RE = /^(another one|again|one more|more|next)$/i;
+  private static readonly WHO_IS_THAT_RE = /^(who is that|who is this|who's that|name\??)$/i;
+  private static readonly VTUBER_EXTRACT_RE =
+    /\b(gawr|gura|pekora|korone|uto|mumei|koyori|fubuki|chloe|ayame|polka|botan|amelia|okayu|watame|aloe|marine|coco|rushia)\b/i;
+
   private pendingIntent = new Map<number, { command: string; baseArgs?: string }>();
   private lastAutoAction = new Map<number, { command: string; args: string; ts: number }>();
   private readonly autoExecutableCommands = getAutoExecutableCommands();
@@ -154,12 +183,12 @@ export class AiController {
   }
 
   private async maybeSendCreativeCommandList(gram: BaseContext, text: string): Promise<boolean> {
-    const lower = this.localPromptize(text);
-    if (!isCommandListQuery(lower)) {
+    const promptized = this.localPromptize(text);
+    if (!isCommandListQuery(promptized)) {
       return false;
     }
-    const preferredGroup = detectCommandGroupPreference(lower);
-    const wantsGrouped = /(category|group|by categ|by category|categor)/.test(lower);
+    const preferredGroup = detectCommandGroupPreference(promptized);
+    const wantsGrouped = AiController.GROUPED_CATALOG_RE.test(promptized);
     const grouped = renderCommandCatalog(wantsGrouped || Boolean(preferredGroup), preferredGroup);
     const fallbackHeader = localCommandListHeader(gram);
     if (this.isLlmBudgetTight()) {
@@ -195,7 +224,7 @@ export class AiController {
   }
 
   private isCommandListQuery(text: string): boolean {
-    return isCommandListQuery(this.localPromptize(text));
+    return isCommandListQuery(text);
   }
 
   private async decidePendingFollowup(
@@ -298,12 +327,7 @@ export class AiController {
 
   private isCodeGenerationRequest(text: string): boolean {
     const lower = this.localPromptize(text);
-    return (
-      /\b(code|snippet|program|script|function|class|algorithm|calculator|calc)\b/.test(lower) &&
-      /\b(lua|java|python|javascript|typescript|c\+\+|cpp|c#|go|rust|php|swift|kotlin)\b/.test(
-        lower,
-      )
-    );
+    return AiController.CODE_GEN_RE.test(lower) && AiController.LANG_RE.test(lower);
   }
 
   private responseMaxTokens(userText: string): number | undefined {
@@ -313,11 +337,12 @@ export class AiController {
 
   private isLikelyGibberish(text: string): boolean {
     const t = text.trim();
+    // early return for empty input
     if (!t) return true;
     const hasLongRun = /(.)\1{8,}/.test(t);
     if (t.length < 160) return hasLongRun;
 
-    // optimization: single pass for tokens and reuse lowercase string to avoid allocations
+    // reuse lowercase string to avoid allocations
     const lower = t.toLowerCase();
     const tokens = lower.split(/\s+/);
     const freq = new Map<string, number>();
@@ -336,7 +361,7 @@ export class AiController {
     const topRatio = top / totalTokens;
     const uniqueRatio = freq.size / totalTokens;
 
-    // optimization: use for loop with surrogate detection for faster, accurate unicode counting
+    // use for loop with surrogate detection for faster, accurate unicode counting
     let nonAscii = 0;
     for (let i = 0; i < t.length; i++) {
       const code = t.charCodeAt(i);
@@ -494,33 +519,32 @@ export class AiController {
   }
 
   private fastPath(gram: BaseContext, text: string): string | null {
-    const lower = text.trim().toLowerCase();
+    const lower = text.trim();
     const from = gram.message?.from;
 
-    if (/(^|\b)(who are you|who r you|who u|about you|what are you)\b/.test(lower)) {
+    if (AiController.WHO_ARE_YOU_RE.test(lower)) {
       return "I’m minar1 — your AI Telegram assistant built by mra1k3r0 (John Paul Caigas).";
     }
 
-    if (/(^|\b)(who am i|my username|what is my username|username\??)\b/.test(lower)) {
+    if (AiController.WHO_AM_I_RE.test(lower)) {
       return `@${from?.username ?? "n/a"}`;
     }
-    if (/(^|\b)(my id|user id|what is my id)\b/.test(lower)) {
+    if (AiController.MY_ID_RE.test(lower)) {
       return `Your user id is ${String(gram.fromId ?? "n/a")}`;
     }
-    if (/(^|\b)(chat id|group id|this chat id)\b/.test(lower)) {
+    if (AiController.CHAT_ID_RE.test(lower)) {
       return `Chat id is ${String(gram.chatId ?? "n/a")}`;
     }
     const asksName =
-      /^(who am i|what(?:'s| is)? my name\??|my name\??)$/i.test(lower) ||
-      /\b(what(?:'s| is)\s+my\s+name)\b/i.test(lower);
-    const isNameEditIntent = /\b(change|rename|set|edit|update)\s+my\s+name\b/i.test(lower);
+      AiController.ASKS_NAME_RE.test(lower) || AiController.ASKS_NAME_ALT_RE.test(lower);
+    const isNameEditIntent = AiController.NAME_EDIT_RE.test(lower);
     if (asksName && !isNameEditIntent) {
       const name = [from?.first_name, from?.last_name].filter(Boolean).join(" ");
       return name ? `Your name is ${name}` : "I can't see your name in this update.";
     }
 
     const calcMatch =
-      lower.match(/^\s*(?:calc|calculate|math)\s+(.+)\s*$/) ?? lower.match(/^\s*=\s*(.+)\s*$/);
+      AiController.CALC_EXPLICIT_RE.exec(lower) ?? AiController.CALC_SHORT_RE.exec(lower);
     if (calcMatch?.[1]) {
       const expr = calcMatch[1].trim();
       const guard = guardMathExpression(expr);
@@ -535,7 +559,7 @@ export class AiController {
       }
     }
 
-    const explicitCmd = lower.match(/(?:^|\s)\/([a-z0-9_]+)/i)?.[1];
+    const explicitCmd = AiController.EXPLICIT_CMD_RE.exec(lower)?.[1];
     if (explicitCmd && !commandRegistry.get(explicitCmd)) {
       return `That command does not exist: /${explicitCmd}. Use /help for valid commands.`;
     }
@@ -581,22 +605,13 @@ export class AiController {
   }
 
   private shouldUseHeavyIntentPlanning(text: string): boolean {
-    const lower = this.localPromptize(text);
-    if (!lower) return false;
-    if (this.isCommandListQuery(lower)) return false;
-    if (
-      lower.length <= 18 &&
-      !/\b(play|video|cat|dog|meme|hug|kiss|pat|cuddle|slap|neko|roll|choose|rps|8ball|vtuber|status|stats|help|id|ping|uptime)\b/.test(
-        lower,
-      )
-    ) {
+    if (!text) return false;
+    if (this.isCommandListQuery(text)) return false;
+    if (text.length <= 18 && !AiController.HEAVY_INTENT_RE.test(text)) {
       return false;
     }
-    const actionish =
-      /\b(send|give|show|fetch|play|video|make|do|run|use|please|pls|can you|could you|i want|i need|help me)\b/.test(
-        lower,
-      );
-    const mentionsKnownCommand = this.findKeywordCommand(lower) !== null;
+    const actionish = AiController.ACTIONISH_RE.test(text);
+    const mentionsKnownCommand = this.findKeywordCommand(text) !== null;
     return actionish || mentionsKnownCommand;
   }
 
@@ -783,8 +798,7 @@ export class AiController {
     await sendRichText(gram, clarify.prompt);
   }
 
-  private async handleAdaptiveIntent(gram: BaseContext, text: string): Promise<boolean> {
-    const promptized = this.localPromptize(text);
+  private async handleAdaptiveIntent(gram: BaseContext, promptized: string): Promise<boolean> {
     if (this.isCommandListQuery(promptized)) return false;
     if (!this.shouldUseHeavyIntentPlanning(promptized)) return false;
     const parsedIntent = this.parseCommandIntent(promptized);
@@ -799,7 +813,7 @@ export class AiController {
       }
     }
     if (this.isLlmBudgetTight()) return false;
-    const optimized = this.optimizePromptInput(text);
+    const optimized = this.optimizePromptInput(promptized);
     const decision = await this.decideAssistantAction(optimized);
     let intent =
       decision.mode === "execute" && decision.command
@@ -809,10 +823,7 @@ export class AiController {
       intent = parsedIntent;
     }
     if (!intent?.command) return false;
-    if (
-      intent.command === "vtuber" &&
-      !/\b(vtuber|gura|pekora|korone|mumei|fubuki|botan|marine|random)\b/i.test(text)
-    ) {
+    if (intent.command === "vtuber" && !AiController.VTUBER_RE.test(promptized)) {
       return false;
     }
 
@@ -820,7 +831,7 @@ export class AiController {
       const mediaCommand: "play" | "video" = intent.command;
       const shouldClarify = await shouldClarifyMediaExec({
         command: mediaCommand,
-        userText: text,
+        userText: promptized,
         args: intent.args,
         llmBudgetTight: this.isLlmBudgetTight(),
         llmChat: (messages) => llm.chat(messages),
@@ -841,7 +852,7 @@ export class AiController {
 
     const clarify = await shouldClarifyCommandExec({
       command: intent.command,
-      userText: text,
+      userText: promptized,
       args: intent.args,
       llmBudgetTight: this.isLlmBudgetTight(),
       catalogJson: commandCatalogJson(this.autoExecutableCommands),
@@ -855,15 +866,15 @@ export class AiController {
       return true;
     }
 
-    await this.maybeSendActionPreface(gram, intent.command, text);
+    await this.maybeSendActionPreface(gram, intent.command, promptized);
 
-    if (intent.command === "help" && this.isCommandListQuery(text)) {
-      await this.maybeSendCreativeCommandList(gram, text);
+    if (intent.command === "help" && this.isCommandListQuery(promptized)) {
+      await this.maybeSendCreativeCommandList(gram, promptized);
       return true;
     }
 
     if (this.requiresArgsMissing(intent.command, intent.args)) {
-      await this.promptForMissingArgs(gram, intent.command, intent.args, text);
+      await this.promptForMissingArgs(gram, intent.command, intent.args, promptized);
       return true;
     }
 
@@ -997,6 +1008,9 @@ export class AiController {
     const text = gram.text;
     const userId = gram.fromId;
     if (!text || !userId) return;
+
+    const promptized = this.localPromptize(text);
+
     if (text.startsWith("/")) {
       const cmdName = extractCommandName(text);
       if (!cmdName) return;
@@ -1039,22 +1053,15 @@ export class AiController {
 
     if (await this.maybeSendCreativeCommandList(gram, text)) return;
 
-    const follow = text.trim().toLowerCase();
     const last = this.lastAutoAction.get(userId);
     const recentLast = last && Date.now() - last.ts < 10 * 60_000 ? last : null;
     if (recentLast) {
-      if (/^(another one|again|one more|more|next)$/i.test(follow)) {
+      if (AiController.AGAIN_RE.test(promptized)) {
         const ran = await this.executeKnownCommand(gram, recentLast.command, recentLast.args);
         if (ran) return;
       }
-      if (
-        /^(who is that|who is this|who's that|name\??)$/i.test(follow) &&
-        recentLast.command === "vtuber"
-      ) {
-        const who =
-          /\b(gura|pekora|korone|uto|mumei|koyori|fubuki|chloe|ayame|polka|botan|amelia|okayu|watame|aloe|marine|coco|rushia)\b/i.exec(
-            recentLast.args,
-          )?.[1] ?? "a random vtuber";
+      if (AiController.WHO_IS_THAT_RE.test(promptized) && recentLast.command === "vtuber") {
+        const who = AiController.VTUBER_EXTRACT_RE.exec(recentLast.args)?.[1] ?? "a random vtuber";
         await gram.reply(`That was ${who}.`);
         return;
       }
@@ -1096,7 +1103,7 @@ export class AiController {
       }
     }
 
-    if (await this.handleAdaptiveIntent(gram, text)) return;
+    if (await this.handleAdaptiveIntent(gram, promptized)) return;
 
     const mode = conversations.getMode(userId);
     if (mode === "agent") {
@@ -1115,10 +1122,11 @@ export class AiController {
     try {
       const { message } = await llm.chat(messages, maxTokens ? { maxTokens } : undefined);
       const extracted = this.extractCommandFromAssistantText(message.content ?? "");
+      const promptized = this.localPromptize(text);
       const shouldAutoRunExtracted =
         this.isActionRequest(text) ||
-        /^\/[a-z0-9_]+/i.test(text.trim()) ||
-        /^(another one|again|one more|more|next)$/i.test(text.trim());
+        text.startsWith("/") ||
+        AiController.AGAIN_RE.test(promptized);
       if (extracted && shouldAutoRunExtracted) {
         if (this.requiresArgsMissing(extracted.command, extracted.args)) {
           await this.promptForMissingArgs(gram, extracted.command, extracted.args, text);
@@ -1129,8 +1137,7 @@ export class AiController {
       }
       if (this.isActionRequest(text)) {
         const suggested =
-          this.parseCommandIntent(message.content ?? "") ??
-          this.parseCommandIntent(this.localPromptize(text));
+          this.parseCommandIntent(message.content ?? "") ?? this.parseCommandIntent(promptized);
         if (suggested?.command) {
           if (this.requiresArgsMissing(suggested.command, suggested.args)) {
             await this.promptForMissingArgs(gram, suggested.command, suggested.args, text);
